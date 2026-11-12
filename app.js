@@ -5224,25 +5224,85 @@ function renderGenerator(lab) {
             </div>
 
             ${g.convergence?.length ? `
-                <div class="card">
-                    <span class="tag">СХОДИМОСТЬ</span>
-                    <h3>RMSE среднего и дисперсии</h3>
-                    <div class="normalization-table-wrap">
-                        <table class="normalization-table">
-                            <thead>
-                                <tr>
-                                    <th>n</th>
-                                    <th>RMSE mean</th>
-                                    <th>Теория mean</th>
-                                    <th>RMSE var</th>
-                                    <th>Теория var</th>
-                                </tr>
-                            </thead>
-                            <tbody>${convRows}</tbody>
-                        </table>
-                    </div>
-                </div>
-            ` : ""}
+    <div class="card generator-convergence-card">
+
+        <div class="experiment-top">
+            <div>
+                <span class="tag">CONVERGENCE ANALYSIS</span>
+                <h3>Сходимость генератора</h3>
+                <p class="muted">
+                    Как увеличение размера выборки уменьшает ошибку
+                    оценки среднего и дисперсии.
+                </p>
+            </div>
+            <span class="experiment-status">● READY</span>
+        </div>
+
+        <div class="generator-convergence-switch">
+
+            <button
+                type="button"
+                class="generator-metric-button is-active"
+                data-generator-metric="mean"
+                aria-pressed="true"
+            >
+                Среднее
+            </button>
+
+            <button
+                type="button"
+                class="generator-metric-button"
+                data-generator-metric="variance"
+                aria-pressed="false"
+            >
+                Дисперсия
+            </button>
+
+        </div>
+
+        <div
+            id="generatorConvergenceChart"
+            class="generator-convergence-chart"
+        >
+            <div class="empty-state">
+                Подготовка графика...
+            </div>
+        </div>
+
+        <div
+            id="generatorConvergenceSummary"
+            class="note"
+        >
+        </div>
+
+        <details class="generator-convergence-details">
+
+            <summary>Посмотреть численные результаты</summary>
+
+            <div class="normalization-table-wrap">
+
+                <table class="normalization-table">
+
+                    <thead>
+                        <tr>
+                            <th>n</th>
+                            <th>RMSE mean</th>
+                            <th>Теория mean</th>
+                            <th>RMSE var</th>
+                            <th>Теория var</th>
+                        </tr>
+                    </thead>
+
+                    <tbody>${convRows}</tbody>
+
+                </table>
+
+            </div>
+
+        </details>
+
+    </div>
+    ` : ""}
 
             ${g.realComparison ? `
                 <div class="card">
@@ -5266,8 +5326,366 @@ function renderGenerator(lab) {
             ` : ""}
         </section>
     `;
+
 }
 
+// ==========================================
+// GENERATOR — CONVERGENCE CHART
+// ==========================================
+
+function drawGeneratorConvergenceChart(convergence, metric = "mean") {
+
+    const config = metric === "variance"
+        ? {
+            empirical: "variance_rmse",
+            theory: "variance_rmse_theory",
+            title: "RMSE оценки дисперсии"
+        }
+        : {
+            empirical: "mean_rmse",
+            theory: "mean_rmse_theory",
+            title: "RMSE оценки среднего"
+        };
+
+    // Оставляем только корректные положительные значения.
+    const points = convergence
+        .map(row => ({
+            n: Number(row.n),
+            empirical: Number(row[config.empirical]),
+            theory: Number(row[config.theory])
+        }))
+        .filter(point =>
+            Number.isFinite(point.n) &&
+            point.n > 0 &&
+            Number.isFinite(point.empirical) &&
+            point.empirical > 0 &&
+            Number.isFinite(point.theory) &&
+            point.theory > 0
+        )
+        .sort((a, b) => a.n - b.n);
+
+    if (points.length < 2) {
+        return emptyState("Недостаточно данных для построения графика.");
+    }
+
+    const width = 760;
+    const height = 360;
+
+    const left = 85;
+    const right = 25;
+    const top = 25;
+    const bottom = 65;
+
+    const plotWidth = width - left - right;
+    const plotHeight = height - top - bottom;
+
+    const minN = points[0].n;
+    const maxN = points[points.length - 1].n;
+
+    const allErrors = points.flatMap(point => [
+        point.empirical,
+        point.theory
+    ]);
+
+    // Используем логарифмическую шкалу по обеим осям.
+    // Это позволяет увидеть характер сходимости n^(-1/2).
+    const minError = Math.min(...allErrors) * 0.8;
+    const maxError = Math.max(...allErrors) * 1.2;
+
+    const logMinN = Math.log10(minN);
+    const logMaxN = Math.log10(maxN);
+
+    const logMinError = Math.log10(minError);
+    const logMaxError = Math.log10(maxError);
+
+    const scaleX = n =>
+        left +
+        (Math.log10(n) - logMinN) /
+        (logMaxN - logMinN) *
+        plotWidth;
+
+    const scaleY = value =>
+        top + plotHeight -
+        (Math.log10(value) - logMinError) /
+        (logMaxError - logMinError) *
+        plotHeight;
+
+    let svg = "";
+
+    // Горизонтальная сетка и логарифмическая шкала RMSE.
+    for (let i = 0; i <= 4; i++) {
+
+        const logValue =
+            logMinError + i * (logMaxError - logMinError) / 4;
+
+        const value = Math.pow(10, logValue);
+        const y = scaleY(value);
+
+        const label = value < 0.01
+            ? value.toFixed(4)
+            : value.toFixed(3);
+
+        svg += `
+            <line
+                x1="${left}"
+                y1="${y}"
+                x2="${width - right}"
+                y2="${y}"
+                class="grid-line"
+            />
+
+            <text
+                x="${left - 10}"
+                y="${y + 4}"
+                text-anchor="end"
+                class="chart-label"
+            >
+                ${label}
+            </text>
+        `;
+    }
+
+    // Подписи оси X — степени десяти.
+    const xTicks = [10, 100, 1000, 10000, 100000]
+        .filter(value => value >= minN && value <= maxN);
+
+    xTicks.forEach(value => {
+
+        const x = scaleX(value);
+
+        svg += `
+            <line
+                x1="${x}"
+                y1="${top}"
+                x2="${x}"
+                y2="${top + plotHeight}"
+                class="grid-line"
+            />
+
+            <text
+                x="${x}"
+                y="${height - 38}"
+                text-anchor="middle"
+                class="chart-label"
+            >
+                ${value.toLocaleString("ru-RU")}
+            </text>
+        `;
+    });
+
+    // Строим координаты эмпирической и теоретической ошибок.
+    const empiricalPath = points
+        .map(point => `${scaleX(point.n)},${scaleY(point.empirical)}`)
+        .join(" ");
+
+    const theoryPath = points
+        .map(point => `${scaleX(point.n)},${scaleY(point.theory)}`)
+        .join(" ");
+
+    svg += `
+        <polyline
+            points="${empiricalPath}"
+            class="generator-line generator-line-empirical"
+        />
+
+        <polyline
+            points="${theoryPath}"
+            class="generator-line generator-line-theory"
+        />
+    `;
+
+    // Маркеры и подсказки для каждой точки.
+    points.forEach(point => {
+
+        const x = scaleX(point.n);
+
+        svg += `
+            <circle
+                cx="${x}"
+                cy="${scaleY(point.empirical)}"
+                r="4"
+                class="generator-point generator-point-empirical"
+            >
+                <title>
+                    n = ${point.n};
+                    эмпирический RMSE = ${point.empirical.toFixed(6)}
+                </title>
+            </circle>
+
+            <circle
+                cx="${x}"
+                cy="${scaleY(point.theory)}"
+                r="4"
+                class="generator-point generator-point-theory"
+            >
+                <title>
+                    n = ${point.n};
+                    теоретический RMSE = ${point.theory.toFixed(6)}
+                </title>
+            </circle>
+        `;
+    });
+
+    return `
+        <div class="generator-chart-title">
+            ${config.title}
+        </div>
+
+        <svg
+            viewBox="0 0 ${width} ${height}"
+            class="chart generator-convergence-svg"
+            role="img"
+            aria-label="${config.title}, логарифмические шкалы"
+        >
+
+            ${svg}
+
+            <line
+                x1="${left}"
+                y1="${top + plotHeight}"
+                x2="${width - right}"
+                y2="${top + plotHeight}"
+                class="axis-line"
+            />
+
+            <text
+                x="${width / 2}"
+                y="${height - 8}"
+                text-anchor="middle"
+                class="chart-label"
+            >
+                Размер выборки n · логарифмическая шкала
+            </text>
+
+            <text
+                x="17"
+                y="${height / 2}"
+                text-anchor="middle"
+                transform="rotate(-90 17 ${height / 2})"
+                class="chart-label"
+            >
+                RMSE · логарифмическая шкала
+            </text>
+
+        </svg>
+
+        <div class="generator-convergence-legend">
+
+            <span>
+                <i class="generator-legend-empirical"></i>
+                Эмпирический RMSE
+            </span>
+
+            <span>
+                <i class="generator-legend-theory"></i>
+                Теоретический RMSE
+            </span>
+
+        </div>
+    `;
+}
+
+
+// ==========================================
+// GENERATOR — CONVERGENCE UPDATE
+// ==========================================
+
+function updateGeneratorConvergence(metric = "mean") {
+
+    const chart = document.getElementById(
+        "generatorConvergenceChart"
+    );
+
+    const summary = document.getElementById(
+        "generatorConvergenceSummary"
+    );
+
+    const convergence = currentLab?.generator?.convergence;
+
+    if (!chart || !summary || !Array.isArray(convergence)) {
+        return;
+    }
+
+    const isVariance = metric === "variance";
+
+    const empiricalKey = isVariance
+        ? "variance_rmse"
+        : "mean_rmse";
+
+    const theoryKey = isVariance
+        ? "variance_rmse_theory"
+        : "mean_rmse_theory";
+
+    const points = convergence
+        .filter(row =>
+            Number(row.n) > 0 &&
+            Number(row[empiricalKey]) > 0 &&
+            Number(row[theoryKey]) > 0
+        )
+        .sort((a, b) => a.n - b.n);
+
+    chart.innerHTML = drawGeneratorConvergenceChart(
+        points.map(row => ({
+            n: row.n,
+            [empiricalKey]: row[empiricalKey],
+            [theoryKey]: row[theoryKey]
+        })),
+        metric
+    );
+
+    if (points.length < 2) {
+        summary.textContent = "Недостаточно данных для анализа сходимости.";
+        return;
+    }
+
+    const first = points[0];
+    const last = points[points.length - 1];
+
+    const empiricalStart = Number(first[empiricalKey]);
+    const empiricalEnd = Number(last[empiricalKey]);
+
+    const theoryStart = Number(first[theoryKey]);
+    const theoryEnd = Number(last[theoryKey]);
+
+    const empiricalFactor = empiricalStart / empiricalEnd;
+    const theoryFactor = theoryStart / theoryEnd;
+
+    const metricName = isVariance
+        ? "дисперсии"
+        : "среднего";
+
+    summary.innerHTML = `
+        <strong>Интерпретация сходимости.</strong>
+
+        При увеличении размера выборки
+        с ${Number(first.n).toLocaleString("ru-RU")}
+        до ${Number(last.n).toLocaleString("ru-RU")}
+
+        эмпирическая ошибка оценки ${metricName}
+        уменьшилась примерно в
+        ${empiricalFactor.toFixed(1)} раза.
+
+        Теоретическая ошибка уменьшилась примерно в
+        ${theoryFactor.toFixed(1)} раза.
+
+        Эмпирические значения близки к теоретическим,
+        что согласуется с ожидаемым поведением генератора.
+    `;
+
+    // Обновляем состояние кнопок переключения.
+    document.querySelectorAll("[data-generator-metric]")
+        .forEach(button => {
+
+            const active = button.dataset.generatorMetric === metric;
+
+            button.classList.toggle("is-active", active);
+
+            button.setAttribute(
+                "aria-pressed",
+                String(active)
+            );
+        });
+}
 
 // ==========================================
 // 15. CONCLUSIONS
@@ -5409,13 +5827,17 @@ function emptyState(message) {
 function attachInteractions() {
 
     // ======================================
-    // DEPENDENCE EXPERIMENT
+    // SAMPLING CONVERGENCE CHART
     // ======================================
 
-    // Отрисовываем график зависимости ошибки от размера выборки.
     if (currentLab?.sampling?.points?.length) {
         renderSamplingChart(currentLab.sampling);
     }
+
+
+    // ======================================
+    // DEPENDENCE EXPERIMENT
+    // ======================================
 
     const dependenceScenario =
         document.getElementById("dependenceScenario");
@@ -5444,157 +5866,193 @@ function attachInteractions() {
     // ======================================
 
     const edaVariableSelect =
-    document.getElementById("edaVariableSelect");
+        document.getElementById("edaVariableSelect");
 
     if (edaVariableSelect) {
 
-    edaVariableSelect.addEventListener(
-        "change",
-        updateEDAExplorer
-    );
+        edaVariableSelect.addEventListener(
+            "change",
+            updateEDAExplorer
+        );
 
-    // Первичная отрисовка выбранной величины.
-    updateEDAExplorer();
+        updateEDAExplorer();
+    }
+
 
     // ======================================
     // GENERATOR EXPERIMENT
     // ======================================
-    const runGeneratorBtn = document.getElementById("runGenerator");
-    const genSizeInput = document.getElementById("generatorSampleSize");
-    const genSizeOutput = document.getElementById("generatorSampleSizeOutput");
 
-    if (runGeneratorBtn && genSizeInput && currentLab?.generator?.demo) {
+    const runGeneratorBtn =
+        document.getElementById("runGenerator");
+
+    const genSizeInput =
+        document.getElementById("generatorSampleSize");
+
+    const genSizeOutput =
+        document.getElementById("generatorSampleSizeOutput");
+
+    if (runGeneratorBtn && genSizeInput) {
+
         if (genSizeOutput) {
+
             genSizeOutput.textContent = genSizeInput.value;
+
             genSizeInput.addEventListener("input", () => {
                 genSizeOutput.textContent = genSizeInput.value;
             });
         }
-        runGeneratorBtn.addEventListener("click", runGeneratorExperiment);
+
+        runGeneratorBtn.addEventListener(
+            "click",
+            runGeneratorExperiment
+        );
     }
-}
-// ======================================
-// HYPOTHESIS TESTING EXPERIMENT
-// ======================================
 
-const hypothesisSelect =
-    document.getElementById("hypothesisSelect");
 
-if (hypothesisSelect) {
-    hypothesisSelect.addEventListener(
-        "change",
-        updateHypothesisExperiment
+    // ======================================
+    // GENERATOR CONVERGENCE
+    // ======================================
+
+    const convergenceButtons = document.querySelectorAll(
+        "[data-generator-metric]"
     );
 
-    const alphaButtons = document.querySelectorAll(
-        ".hypothesis-alpha-button"
-    );
+    if (convergenceButtons.length) {
 
-    alphaButtons.forEach(button => {
-        button.addEventListener("click", () => {
+        convergenceButtons.forEach(button => {
 
-            alphaButtons.forEach(item => {
-                item.classList.remove("is-selected");
-                item.setAttribute("aria-pressed", "false");
+            button.addEventListener("click", () => {
+                updateGeneratorConvergence(
+                    button.dataset.generatorMetric
+                );
             });
 
-            button.classList.add("is-selected");
-            button.setAttribute("aria-pressed", "true");
-
-            updateHypothesisExperiment();
         });
-    });
 
-    updateHypothesisExperiment();
-}
-
-// ======================================
-// NORMALIZATION EXPERIMENT
-// ======================================
-
-const normalizationMethod =
-    document.getElementById("normalizationMethod");
-
-if (normalizationMethod) {
-
-    const lowerInput =
-        document.getElementById("normalizationTargetMin");
-
-    const upperInput =
-        document.getElementById("normalizationTargetMax");
-
-    // Переключение между Min-Max и Z-score.
-    normalizationMethod.addEventListener(
-        "change",
-        updateNormalizationExperiment
-    );
-
-    // Изменение нижней границы Min-Max.
-    lowerInput?.addEventListener(
-        "input",
-        updateNormalizationExperiment
-    );
-
-    // Изменение верхней границы Min-Max.
-    upperInput?.addEventListener(
-        "input",
-        updateNormalizationExperiment
-    );
-
-    // Первичная отрисовка при открытии лаборатории.
-    updateNormalizationExperiment();
-}
+        updateGeneratorConvergence("mean");
+    }
 
 
-// ======================================
-// DISTRIBUTION FITTING EXPERIMENT
-// ======================================
+    // ======================================
+    // HYPOTHESIS TESTING
+    // ======================================
 
-const distributionGroupSelect =
-document.getElementById("distributionGroup");
+    const hypothesisSelect =
+        document.getElementById("hypothesisSelect");
 
-if (distributionGroupSelect) {
+    if (hypothesisSelect) {
 
-// При смене группы возвращаем параметры
-// к оценкам, рассчитанным для этой группы.
-distributionGroupSelect.addEventListener(
-    "change",
-    resetDistributionParameters
-);
+        hypothesisSelect.addEventListener(
+            "change",
+            updateHypothesisExperiment
+        );
 
-const distributionParameterIds = [
-    "normalMu",
-    "normalSigma",
-    "lognormalMu",
-    "lognormalSigma",
-    "exponentialLambda"
-];
+        const alphaButtons = document.querySelectorAll(
+            ".hypothesis-alpha-button"
+        );
 
-// Изменение любого параметра перестраивает график.
-distributionParameterIds.forEach(id => {
+        alphaButtons.forEach(button => {
 
-    const input = document.getElementById(id);
+            button.addEventListener("click", () => {
 
-    input?.addEventListener(
-        "input",
-        updateDistributionFitting
-    );
+                alphaButtons.forEach(item => {
+                    item.classList.remove("is-selected");
+                    item.setAttribute("aria-pressed", "false");
+                });
 
-});
+                button.classList.add("is-selected");
+                button.setAttribute("aria-pressed", "true");
 
-// Сброс параметров.
-const resetButton = document.getElementById(
-    "resetDistributionParameters"
-);
+                updateHypothesisExperiment();
+            });
 
-resetButton?.addEventListener(
-    "click",
-    resetDistributionParameters
-);
+        });
 
-// Первичное построение графика.
-updateDistributionFitting();
-}
+        updateHypothesisExperiment();
+    }
+
+
+    // ======================================
+    // NORMALIZATION
+    // ======================================
+
+    const normalizationMethod =
+        document.getElementById("normalizationMethod");
+
+    if (normalizationMethod) {
+
+        const lowerInput =
+            document.getElementById("normalizationTargetMin");
+
+        const upperInput =
+            document.getElementById("normalizationTargetMax");
+
+        normalizationMethod.addEventListener(
+            "change",
+            updateNormalizationExperiment
+        );
+
+        lowerInput?.addEventListener(
+            "input",
+            updateNormalizationExperiment
+        );
+
+        upperInput?.addEventListener(
+            "input",
+            updateNormalizationExperiment
+        );
+
+        updateNormalizationExperiment();
+    }
+
+
+    // ======================================
+    // DISTRIBUTION FITTING
+    // ======================================
+
+    const distributionGroupSelect =
+        document.getElementById("distributionGroup");
+
+    if (distributionGroupSelect) {
+
+        distributionGroupSelect.addEventListener(
+            "change",
+            resetDistributionParameters
+        );
+
+        const parameterIds = [
+            "normalMu",
+            "normalSigma",
+            "lognormalMu",
+            "lognormalSigma",
+            "exponentialLambda"
+        ];
+
+        parameterIds.forEach(id => {
+
+            const input = document.getElementById(id);
+
+            input?.addEventListener(
+                "input",
+                updateDistributionFitting
+            );
+
+        });
+
+        const resetButton = document.getElementById(
+            "resetDistributionParameters"
+        );
+
+        resetButton?.addEventListener(
+            "click",
+            resetDistributionParameters
+        );
+
+        updateDistributionFitting();
+    }
+
+
     // ======================================
     // SAMPLING EXPERIMENT
     // ======================================
@@ -5614,31 +6072,43 @@ updateDistributionFitting();
     const runButton =
         document.getElementById("runSampling");
 
-    // Отсутствие элементов Sampling
-    // не должно блокировать другие эксперименты.
 
-    if (!sizeInput || !repeatInput || !runButton) {
-        return;
-    }
+    if (sizeInput) {
 
-    if (sizeOutput) {
-        sizeOutput.textContent = sizeInput.value;
-        sizeInput.addEventListener("input", () => {
+        if (sizeOutput) {
             sizeOutput.textContent = sizeInput.value;
+        }
+
+        sizeInput.addEventListener("input", () => {
+            if (sizeOutput) {
+                sizeOutput.textContent = sizeInput.value;
+            }
         });
     }
 
-    if (repeatOutput) {
-        repeatOutput.textContent = repeatInput.value;
-        repeatInput.addEventListener("input", () => {
+
+    if (repeatInput) {
+
+        if (repeatOutput) {
             repeatOutput.textContent = repeatInput.value;
+        }
+
+        repeatInput.addEventListener("input", () => {
+            if (repeatOutput) {
+                repeatOutput.textContent = repeatInput.value;
+            }
         });
     }
 
-    runButton.addEventListener(
-        "click",
-        runSamplingExperiment
-    );
+
+    if (runButton) {
+
+        runButton.addEventListener(
+            "click",
+            runSamplingExperiment
+        );
+    }
+
 }
 // ==========================================
 // DEPENDENCE EXPERIMENT
@@ -6058,34 +6528,90 @@ function updateDependenceExperiment() {
 // ==========================================
 
 function buildCdf(probabilities) {
-    const cdf = [];
-    let sum = 0;
-    for (const p of probabilities) {
-        sum += p;
-        cdf.push(sum);
+
+    if (!Array.isArray(probabilities) || probabilities.length === 0) {
+        throw new Error("Массив вероятностей пуст.");
     }
-    // на случай погрешности float
-    if (cdf.length) cdf[cdf.length - 1] = 1;
+
+    const values = probabilities.map(Number);
+
+    if (values.some(p => !Number.isFinite(p) || p < 0)) {
+        throw new Error("Вероятности должны быть конечными и неотрицательными.");
+    }
+
+    const total = values.reduce((sum, p) => sum + p, 0);
+
+    if (total <= 0) {
+        throw new Error("Сумма вероятностей должна быть больше нуля.");
+    }
+
+    // Нормализуем вероятности.
+    // Это также компенсирует небольшую погрешность округления.
+    let cumulative = 0;
+
+    const cdf = values.map(probability => {
+        cumulative += probability / total;
+        return cumulative;
+    });
+
+    // Гарантируем точную правую границу.
+    cdf[cdf.length - 1] = 1;
+
     return cdf;
 }
 
-function inverseCdfSample(qualities, probabilities, u) {
-    const cdf = buildCdf(probabilities);
-    // первая C_j > u  (side = 'right' как в ноутбуке)
-    for (let i = 0; i < cdf.length; i++) {
-        if (u < cdf[i]) return qualities[i];
+function inverseCdfSample(qualities, cdf, u) {
+
+    if (
+        !Array.isArray(qualities) ||
+        qualities.length !== cdf.length
+    ) {
+        throw new Error("Размеры массивов qualities и CDF не совпадают.");
     }
+
+    // Находим первую границу, которая строго больше U.
+    for (let i = 0; i < cdf.length; i++) {
+
+        if (u < cdf[i]) {
+            return qualities[i];
+        }
+    }
+
     return qualities[qualities.length - 1];
 }
 
 function generateQualitySample(qualities, probabilities, n) {
-    const sample = new Array(n);
-    for (let i = 0; i < n; i++) {
-        sample[i] = inverseCdfSample(qualities, probabilities, Math.random());
+
+    if (
+        !Array.isArray(qualities) ||
+        qualities.length === 0 ||
+        qualities.length !== probabilities.length
+    ) {
+        throw new Error("Некорректные данные генератора.");
     }
+
+    if (!Number.isInteger(n) || n < 1) {
+        throw new Error("Размер выборки должен быть положительным целым числом.");
+    }
+
+    // Важное улучшение:
+    // строим CDF один раз, а не для каждого элемента.
+    const cdf = buildCdf(probabilities);
+
+    const sample = new Array(n);
+
+    for (let i = 0; i < n; i++) {
+
+        sample[i] = inverseCdfSample(
+            qualities,
+            cdf,
+            Math.random()
+        );
+
+    }
+
     return sample;
 }
-
 function sampleHistogram(sample, qualities) {
     const counts = Object.fromEntries(qualities.map(q => [q, 0]));
     sample.forEach(v => { counts[v] = (counts[v] || 0) + 1; });

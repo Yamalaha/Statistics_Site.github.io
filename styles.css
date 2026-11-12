@@ -2560,3 +2560,146 @@ input:focus-visible {
 .legend-simulation {
     background: var(--dark);
 }
+
+/* ==========================================
+   GENERATOR CONVERGENCE
+========================================== */
+
+.generator-convergence-switch {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 20px 0 12px;
+}
+
+.generator-metric-button {
+    padding: 9px 17px;
+
+    color: var(--muted);
+    background: var(--surface-alt);
+
+    border: 1px solid var(--border);
+    border-radius: 9px;
+
+    font-size: 11px;
+    font-weight: 600;
+
+    cursor: pointer;
+    transition: 0.2s;
+}
+
+.generator-metric-button:hover {
+    border-color: var(--wine);
+    color: var(--wine);
+}
+
+.generator-metric-button.is-active {
+    color: white;
+    background: var(--wine);
+    border-color: var(--wine);
+}
+
+.generator-metric-button:focus-visible {
+    outline: 2px solid var(--gold);
+    outline-offset: 3px;
+}
+
+.generator-chart-title {
+    margin: 18px 0 5px;
+
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.generator-convergence-chart {
+    min-width: 0;
+    margin-top: 12px;
+    overflow-x: auto;
+}
+
+.generator-convergence-svg {
+    display: block;
+    width: 100%;
+    min-width: 560px;
+}
+
+.generator-line {
+    fill: none;
+    stroke-width: 2.7;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.generator-line-empirical {
+    stroke: var(--wine);
+}
+
+.generator-line-theory {
+    stroke: var(--sage);
+    stroke-dasharray: 7 5;
+}
+
+.generator-point {
+    stroke-width: 1.5;
+}
+
+.generator-point-empirical {
+    fill: var(--wine);
+    stroke: var(--surface);
+}
+
+.generator-point-theory {
+    fill: var(--sage);
+    stroke: var(--surface);
+}
+
+.generator-convergence-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 18px;
+
+    margin: 12px 0 18px;
+
+    color: var(--muted);
+    font-size: 10px;
+}
+
+.generator-convergence-legend span {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+}
+
+.generator-convergence-legend i {
+    display: inline-block;
+    width: 20px;
+    height: 0;
+    border-top: 3px solid;
+    border-radius: 3px;
+}
+
+.generator-legend-empirical {
+    border-color: var(--wine);
+}
+
+.generator-legend-theory {
+    border-color: var(--sage);
+    border-top-style: dashed;
+}
+
+.generator-convergence-details {
+    margin-top: 20px;
+    padding-top: 15px;
+    border-top: 1px solid var(--border);
+}
+
+.generator-convergence-details summary {
+    color: var(--wine);
+    font-size: 11px;
+    font-weight: 650;
+    cursor: pointer;
+}
+
+.generator-convergence-details .normalization-table-wrap {
+    margin-top: 15px;
+}
