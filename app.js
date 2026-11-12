@@ -18,6 +18,20 @@ const NAV_ITEMS = [
 
 let currentLab = null;
 
+let generatorTrainingRows = [];
+
+let generatorTestRows = [];
+
+let generatorTrainingLabId = null;
+
+let activeGeneratorDemo = null;
+
+// Кэш загруженных данных.
+// При повторном открытии лабораторной CSV не скачиваются заново.
+let generatorDatasetCache = null;
+
+let generatorDatasetPromise = null;
+
 // Наблюдатель за активной секцией.
 let sectionObserver = null;
 
@@ -5135,6 +5149,7 @@ function renderGenerator(lab) {
     }
 
     const demo = g.demo;
+    const cdfExplorer = renderGeneratorCdfExplorer(demo);
     const probs = demo.qualities.map((q, i) => `
         <div class="composition-item">
             <div class="composition-label">
@@ -5167,10 +5182,16 @@ function renderGenerator(lab) {
 
             <div class="card">
                 <span class="tag">МОДЕЛЬ</span>
-                <h3>Демо: alcohol = ${demo.alcohol} ${escapeHTML(demo.unit)}</h3>
+                <h3 id="generatorModelTitle">
+                    Условное распределение:
+                    alcohol = ${demo.alcohol} ${escapeHTML(demo.unit)}
+                </h3>
                 <p class="muted">${escapeHTML(g.description)}</p>
 
-                <div class="experiment-metrics" style="margin-top:18px">
+                <div
+                    class="experiment-metrics generator-model-metrics"
+                    id="generatorModelMetrics"
+                    style="margin-top:18px"
                     <div class="result-metric">
                         <small>Среднее модели</small>
                         <strong>${demo.mean.toFixed(4)}</strong>
@@ -5191,7 +5212,14 @@ function renderGenerator(lab) {
 
                 <div class="divider"></div>
                 <h3>Вероятности оценок</h3>
-                ${probs}
+
+                <div id="generatorProbabilityList">
+                    ${probs}
+                </div>
+
+                <div id="generatorCdfExplorerMount">
+                    ${cdfExplorer}
+                </div>
             </div>
 
             <div class="card experiment-card">
@@ -5199,7 +5227,13 @@ function renderGenerator(lab) {
                     <div>
                         <span class="tag">ЭКСПЕРИМЕНТ</span>
                         <h3>Сэмплирование inverse CDF</h3>
-                        <p class="muted">Генерация целых оценок из распределения соседей при ${demo.alcohol}% об.</p>
+                        <p
+                            class="muted"
+                            id="generatorSampleDescription"
+                        >
+                            Генерация целых оценок из распределения соседей
+                            при ${demo.alcohol}% об.
+                        </p>
                     </div>
                     <span class="experiment-status">● ИНТЕРАКТИВНО</span>
                 </div>
@@ -5213,7 +5247,7 @@ function renderGenerator(lab) {
                         <input id="generatorSampleSize" type="range" min="50" max="5000" step="50" value="1000">
                         <div class="range-labels"><span>50</span><span>5000</span></div>
                     </div>
-                    <button id="runGenerator" class="primary-button" type="button">
+                    <button id="runGenerator" class="primary-button" type="button" disabled>
                         <span>↗</span> СГЕНЕРИРОВАТЬ
                     </button>
                 </div>
@@ -5327,6 +5361,243 @@ function renderGenerator(lab) {
         </section>
     `;
 
+}
+
+// ==========================================
+// GENERATOR — INVERSE CDF EXPLORER
+// ==========================================
+
+function renderGeneratorCdfExplorer(demo) {
+
+    const cdf = buildCdf(demo.probabilities);
+
+    const initialU = 0.72;
+
+    let lower = 0;
+    let selectedIndex = 0;
+
+    const items = demo.qualities.map((quality, index) => {
+
+        const upper = cdf[index];
+
+        const probability = upper - lower;
+
+        if (initialU >= lower && initialU < upper) {
+            selectedIndex = index;
+        }
+
+        const item = {
+            quality,
+            lower,
+            upper,
+            probability
+        };
+
+        lower = upper;
+
+        return item;
+    });
+
+    const segments = items.map((item, index) => `
+        <div
+            class="generator-cdf-segment ${
+                index === selectedIndex ? "is-selected" : ""
+            }"
+            data-cdf-segment="${index}"
+            style="width:${item.probability * 100}%"
+            title="Q = ${item.quality}; P = ${(item.probability * 100).toFixed(3)}%"
+        ></div>
+    `).join("");
+
+    const rows = items.map((item, index) => `
+        <div
+            class="generator-cdf-row ${
+                index === selectedIndex ? "is-selected" : ""
+            }"
+            data-cdf-row="${index}"
+        >
+            <strong>Q = ${item.quality}</strong>
+
+            <span>
+                ${(item.probability * 100).toFixed(3)}%
+            </span>
+
+            <span>
+                [${item.lower.toFixed(5)}; ${item.upper.toFixed(5)})
+            </span>
+        </div>
+    `).join("");
+
+    const selected = items[selectedIndex];
+
+    return `
+        <div class="generator-cdf-explorer">
+
+            <div class="divider"></div>
+
+            <span class="tag">INVERSE CDF EXPLORER</span>
+
+            <h3>Как случайное число выбирает оценку?</h3>
+
+            <p class="muted">
+                Изменяй U и наблюдай, в какой интервал
+                накопленной вероятности оно попадает.
+            </p>
+
+            <div class="generator-cdf-control">
+
+                <label for="generatorUniformInput">
+                    Случайное число U
+                    <output id="generatorUniformOutput">
+                        ${initialU.toFixed(4)}
+                    </output>
+                </label>
+
+                <input
+                    id="generatorUniformInput"
+                    type="range"
+                    min="0"
+                    max="0.9999"
+                    step="0.0001"
+                    value="${initialU}"
+                >
+
+                <div class="range-labels">
+                    <span>0</span>
+                    <span>1</span>
+                </div>
+
+            </div>
+
+            <div class="generator-cdf-track" id="generatorCdfTrack">
+                ${segments}
+            </div>
+
+            <div class="generator-cdf-selection" id="generatorCdfSelection">
+
+                <span class="tag">ВЫБРАННАЯ ОЦЕНКА</span>
+
+                <strong>
+                    U = ${initialU.toFixed(4)}
+                    → Q* = ${selected.quality}
+                </strong>
+
+                <p>
+                    Интервал:
+                    [${selected.lower.toFixed(5)};
+                    ${selected.upper.toFixed(5)})
+                </p>
+
+                <p>
+                    Вероятность этой оценки:
+                    ${(selected.probability * 100).toFixed(3)}%
+                </p>
+
+            </div>
+
+            <div class="generator-cdf-rows" id="generatorCdfRows">
+                ${rows}
+            </div>
+
+            <div class="note">
+                U имеет равномерное распределение на [0, 1).
+                Генератор выбирает первую оценку Qⱼ,
+                для которой накопленная вероятность Cⱼ больше U.
+            </div>
+
+        </div>
+    `;
+}
+
+
+// Обновление выбора оценки при перемещении U.
+function updateGeneratorCdfExplorer() {
+
+    const demo = getActiveGeneratorDemo();
+
+    const input = document.getElementById(
+        "generatorUniformInput"
+    );
+
+    const output = document.getElementById(
+        "generatorUniformOutput"
+    );
+
+    const selection = document.getElementById(
+        "generatorCdfSelection"
+    );
+
+    if (!demo || !input || !output || !selection) {
+        return;
+    }
+
+    const u = Number(input.value);
+    const cdf = buildCdf(demo.probabilities);
+
+    let lower = 0;
+    let selectedIndex = demo.qualities.length - 1;
+
+    const items = demo.qualities.map((quality, index) => {
+
+        const upper = cdf[index];
+
+        const item = {
+            quality,
+            lower,
+            upper,
+            probability: upper - lower
+        };
+
+        if (u >= lower && u < upper) {
+            selectedIndex = index;
+        }
+
+        lower = upper;
+
+        return item;
+    });
+
+    const selected = items[selectedIndex];
+
+    output.textContent = u.toFixed(4);
+
+    selection.innerHTML = `
+        <span class="tag">ВЫБРАННАЯ ОЦЕНКА</span>
+
+        <strong>
+            U = ${u.toFixed(4)}
+            → Q* = ${selected.quality}
+        </strong>
+
+        <p>
+            Интервал:
+            [${selected.lower.toFixed(5)};
+            ${selected.upper.toFixed(5)})
+        </p>
+
+        <p>
+            Вероятность этой оценки:
+            ${(selected.probability * 100).toFixed(3)}%
+        </p>
+    `;
+
+    document.querySelectorAll("[data-cdf-row]").forEach(row => {
+
+        const active =
+            Number(row.dataset.cdfRow) === selectedIndex;
+
+        row.classList.toggle("is-selected", active);
+
+    });
+
+    document.querySelectorAll("[data-cdf-segment]").forEach(segment => {
+
+        const active =
+            Number(segment.dataset.cdfSegment) === selectedIndex;
+
+        segment.classList.toggle("is-selected", active);
+
+    });
 }
 
 // ==========================================
@@ -5703,6 +5974,138 @@ function renderConclusions(lab) {
                 "Основные результаты и интерпретация."
             )}
 
+            <div class="card generator-training-card">
+
+                <span class="tag">DATA SOURCE</span>
+
+                <h3>Обучающая выборка Wine Quality</h3>
+
+                <p class="muted">
+                    Исходные данные автоматически загружаются
+                    из локальных CSV-файлов проекта.
+                </p>
+
+                <div id="generatorTrainingStatus" class="note">
+                    Ожидание загрузки данных...
+                </div>
+
+                <div class="generator-knn-controls" id="generatorKnnControls" hidden>
+
+                    <div class="control-field">
+
+                        <label for="generatorAlcoholInput">
+                            Крепость вина
+                            <output id="generatorAlcoholOutput">12.00</output>
+                        </label>
+
+                        <input
+                            type="range"
+                            id="generatorAlcoholInput"
+                            min="8"
+                            max="14"
+                            step="0.1"
+                            value="12"
+                            disabled
+                        >
+
+                    </div>
+
+                    <div class="control-field">
+
+                        <label for="generatorKInput">
+                            Количество соседей k
+                            <output id="generatorKOutput">720</output>
+                        </label>
+
+                        <input
+                            type="range"
+                            id="generatorKInput"
+                            min="10"
+                            max="2000"
+                            step="1"
+                            value="720"
+                            disabled
+                        >
+
+                    </div>
+
+                    </div>
+
+                        <button
+                            type="button"
+                            id="reloadGeneratorData"
+                            class="distribution-reset"
+                        >
+                            Повторить загрузку данных
+                        </button>
+
+                    </div>
+
+                    <div class="card generator-evaluation-card">
+
+            <div class="experiment-top">
+
+                <div>
+                    <span class="tag">MODEL VALIDATION</span>
+
+                    <h3>Проверка на независимой выборке</h3>
+
+                    <p class="muted">
+                        Сравнение вероятностных прогнозов kNN
+                        с реальными оценками тестовой выборки.
+                    </p>
+                </div>
+
+                <span class="experiment-status">
+                    ● TEST
+                </span>
+
+            </div>
+
+            <div class="generator-evaluation-controls">
+
+                <div class="control-field">
+
+                    <label for="generatorEvaluationGroup">
+                        Исследуемая группа
+                    </label>
+
+                    <select
+                        id="generatorEvaluationGroup"
+                        class="select"
+                        disabled
+                    >
+                        <option value="all">Все вина</option>
+                        <option value="red">Красное вино</option>
+                        <option value="white">Белое вино</option>
+                    </select>
+
+                </div>
+
+                <button
+                    type="button"
+                    id="runGeneratorEvaluation"
+                    class="primary-button"
+                    disabled
+                >
+                    ПРОВЕРИТЬ МОДЕЛЬ
+                </button>
+
+            </div>
+
+            <div
+                id="generatorEvaluationResult"
+                class="generator-evaluation-result"
+            >
+
+                <div class="empty-state">
+                    Сначала дождись загрузки обучающей и тестовой выборок.
+                </div>
+
+            </div>
+
+        </div>
+
             <div class="card">
 
                 ${lab.conclusions.length
@@ -5880,234 +6283,309 @@ function attachInteractions() {
 
 
     // ======================================
-    // GENERATOR EXPERIMENT
+    // GENERATOR — AUTOMATIC DATA LOADING
     // ======================================
 
-    const runGeneratorBtn =
-        document.getElementById("runGenerator");
-
-    const genSizeInput =
-        document.getElementById("generatorSampleSize");
-
-    const genSizeOutput =
-        document.getElementById("generatorSampleSizeOutput");
-
-    if (runGeneratorBtn && genSizeInput) {
-
-        if (genSizeOutput) {
-
-            genSizeOutput.textContent = genSizeInput.value;
-
-            genSizeInput.addEventListener("input", () => {
-                genSizeOutput.textContent = genSizeInput.value;
-            });
-        }
-
-        runGeneratorBtn.addEventListener(
-            "click",
-            runGeneratorExperiment
-        );
-    }
-
-
-    // ======================================
-    // GENERATOR CONVERGENCE
-    // ======================================
-
-    const convergenceButtons = document.querySelectorAll(
-        "[data-generator-metric]"
+    const generatorAlcoholInput = document.getElementById(
+        "generatorAlcoholInput"
     );
 
-    if (convergenceButtons.length) {
+    const generatorKInput = document.getElementById(
+        "generatorKInput"
+    );
 
-        convergenceButtons.forEach(button => {
+    const generatorSampleSize = document.getElementById(
+        "generatorSampleSize"
+    );
 
-            button.addEventListener("click", () => {
-                updateGeneratorConvergence(
-                    button.dataset.generatorMetric
-                );
-            });
+    const generatorSampleSizeOutput = document.getElementById(
+        "generatorSampleSizeOutput"
+    );
 
-        });
+    const generatorRunButton = document.getElementById(
+        "runGenerator"
+    );
 
-        updateGeneratorConvergence("mean");
-    }
-
-
-    // ======================================
-    // HYPOTHESIS TESTING
-    // ======================================
-
-    const hypothesisSelect =
-        document.getElementById("hypothesisSelect");
-
-    if (hypothesisSelect) {
-
-        hypothesisSelect.addEventListener(
-            "change",
-            updateHypothesisExperiment
-        );
-
-        const alphaButtons = document.querySelectorAll(
-            ".hypothesis-alpha-button"
-        );
-
-        alphaButtons.forEach(button => {
-
-            button.addEventListener("click", () => {
-
-                alphaButtons.forEach(item => {
-                    item.classList.remove("is-selected");
-                    item.setAttribute("aria-pressed", "false");
-                });
-
-                button.classList.add("is-selected");
-                button.setAttribute("aria-pressed", "true");
-
-                updateHypothesisExperiment();
-            });
-
-        });
-
-        updateHypothesisExperiment();
-    }
+    const reloadGeneratorButton = document.getElementById(
+        "reloadGeneratorData"
+    );
 
 
-    // ======================================
-    // NORMALIZATION
-    // ======================================
-
-    const normalizationMethod =
-        document.getElementById("normalizationMethod");
-
-    if (normalizationMethod) {
-
-        const lowerInput =
-            document.getElementById("normalizationTargetMin");
-
-        const upperInput =
-            document.getElementById("normalizationTargetMax");
-
-        normalizationMethod.addEventListener(
-            "change",
-            updateNormalizationExperiment
-        );
-
-        lowerInput?.addEventListener(
-            "input",
-            updateNormalizationExperiment
-        );
-
-        upperInput?.addEventListener(
-            "input",
-            updateNormalizationExperiment
-        );
-
-        updateNormalizationExperiment();
-    }
+    // Изменение крепости.
+    generatorAlcoholInput?.addEventListener(
+        "input",
+        updateGeneratorKnnModel
+    );
 
 
-    // ======================================
-    // DISTRIBUTION FITTING
-    // ======================================
-
-    const distributionGroupSelect =
-        document.getElementById("distributionGroup");
-
-    if (distributionGroupSelect) {
-
-        distributionGroupSelect.addEventListener(
-            "change",
-            resetDistributionParameters
-        );
-
-        const parameterIds = [
-            "normalMu",
-            "normalSigma",
-            "lognormalMu",
-            "lognormalSigma",
-            "exponentialLambda"
-        ];
-
-        parameterIds.forEach(id => {
-
-            const input = document.getElementById(id);
-
-            input?.addEventListener(
-                "input",
-                updateDistributionFitting
-            );
-
-        });
-
-        const resetButton = document.getElementById(
-            "resetDistributionParameters"
-        );
-
-        resetButton?.addEventListener(
-            "click",
-            resetDistributionParameters
-        );
-
-        updateDistributionFitting();
-    }
+    // Изменение количества соседей.
+    generatorKInput?.addEventListener(
+        "input",
+        updateGeneratorKnnModel
+    );
 
 
-    // ======================================
-    // SAMPLING EXPERIMENT
-    // ======================================
+    // Размер генерируемой выборки.
+    if (generatorSampleSize) {
 
-    const sizeInput =
-        document.getElementById("sampleSizeInput");
-
-    const repeatInput =
-        document.getElementById("repeatInput");
-
-    const sizeOutput =
-        document.getElementById("sampleSizeOutput");
-
-    const repeatOutput =
-        document.getElementById("repeatOutput");
-
-    const runButton =
-        document.getElementById("runSampling");
-
-
-    if (sizeInput) {
-
-        if (sizeOutput) {
-            sizeOutput.textContent = sizeInput.value;
+        if (generatorSampleSizeOutput) {
+            generatorSampleSizeOutput.textContent =
+                generatorSampleSize.value;
         }
 
-        sizeInput.addEventListener("input", () => {
+        generatorSampleSize.addEventListener("input", () => {
+
+            if (generatorSampleSizeOutput) {
+                generatorSampleSizeOutput.textContent =
+                    generatorSampleSize.value;
+            }
+
+        });
+    }
+
+
+    // Запуск генератора.
+    generatorRunButton?.addEventListener(
+        "click",
+        runGeneratorExperiment
+    );
+
+    // Запуск независимой проверки модели.
+    const evaluationButton = document.getElementById(
+        "runGeneratorEvaluation"
+    );
+
+    evaluationButton?.addEventListener(
+        "click",
+        runGeneratorEvaluation
+    );
+
+
+    // Повторное подключение файлов.
+    reloadGeneratorButton?.addEventListener(
+        "click",
+        loadGeneratorTrainingData
+    );
+
+
+    // Автоматически загружаем CSV при открытии лабораторной.
+    if (
+        document.getElementById("generatorTrainingStatus")
+    ) {
+        loadGeneratorTrainingData();
+    }
+
+
+    // Обновление inverse CDF через делегирование.
+    // Сам контейнер остаётся на месте, даже когда его содержимое меняется.
+    const cdfMount = document.getElementById(
+        "generatorCdfExplorerMount"
+    );
+
+    cdfMount?.addEventListener("input", event => {
+
+        if (event.target?.id === "generatorUniformInput") {
+            updateGeneratorCdfExplorer();
+        }
+
+    });
+        // ======================================
+        // GENERATOR CONVERGENCE
+        // ======================================
+
+        const convergenceButtons = document.querySelectorAll(
+            "[data-generator-metric]"
+        );
+
+        if (convergenceButtons.length) {
+
+            convergenceButtons.forEach(button => {
+
+                button.addEventListener("click", () => {
+                    updateGeneratorConvergence(
+                        button.dataset.generatorMetric
+                    );
+                });
+
+            });
+
+            updateGeneratorConvergence("mean");
+        }
+
+        // ======================================
+        // HYPOTHESIS TESTING
+        // ======================================
+
+        const hypothesisSelect =
+            document.getElementById("hypothesisSelect");
+
+        if (hypothesisSelect) {
+
+            hypothesisSelect.addEventListener(
+                "change",
+                updateHypothesisExperiment
+            );
+
+            const alphaButtons = document.querySelectorAll(
+                ".hypothesis-alpha-button"
+            );
+
+            alphaButtons.forEach(button => {
+
+                button.addEventListener("click", () => {
+
+                    alphaButtons.forEach(item => {
+                        item.classList.remove("is-selected");
+                        item.setAttribute("aria-pressed", "false");
+                    });
+
+                    button.classList.add("is-selected");
+                    button.setAttribute("aria-pressed", "true");
+
+                    updateHypothesisExperiment();
+                });
+
+            });
+
+            updateHypothesisExperiment();
+        }
+
+
+        // ======================================
+        // NORMALIZATION
+        // ======================================
+
+        const normalizationMethod =
+            document.getElementById("normalizationMethod");
+
+        if (normalizationMethod) {
+
+            const lowerInput =
+                document.getElementById("normalizationTargetMin");
+
+            const upperInput =
+                document.getElementById("normalizationTargetMax");
+
+            normalizationMethod.addEventListener(
+                "change",
+                updateNormalizationExperiment
+            );
+
+            lowerInput?.addEventListener(
+                "input",
+                updateNormalizationExperiment
+            );
+
+            upperInput?.addEventListener(
+                "input",
+                updateNormalizationExperiment
+            );
+
+            updateNormalizationExperiment();
+        }
+
+
+        // ======================================
+        // DISTRIBUTION FITTING
+        // ======================================
+
+        const distributionGroupSelect =
+            document.getElementById("distributionGroup");
+
+        if (distributionGroupSelect) {
+
+            distributionGroupSelect.addEventListener(
+                "change",
+                resetDistributionParameters
+            );
+
+            const parameterIds = [
+                "normalMu",
+                "normalSigma",
+                "lognormalMu",
+                "lognormalSigma",
+                "exponentialLambda"
+            ];
+
+            parameterIds.forEach(id => {
+
+                const input = document.getElementById(id);
+
+                input?.addEventListener(
+                    "input",
+                    updateDistributionFitting
+                );
+
+            });
+
+            const resetButton = document.getElementById(
+                "resetDistributionParameters"
+            );
+
+            resetButton?.addEventListener(
+                "click",
+                resetDistributionParameters
+            );
+
+            updateDistributionFitting();
+        }
+
+
+        // ======================================
+        // SAMPLING EXPERIMENT
+        // ======================================
+
+        const sizeInput =
+            document.getElementById("sampleSizeInput");
+
+        const repeatInput =
+            document.getElementById("repeatInput");
+
+        const sizeOutput =
+            document.getElementById("sampleSizeOutput");
+
+        const repeatOutput =
+            document.getElementById("repeatOutput");
+
+        const runButton =
+            document.getElementById("runSampling");
+
+
+        if (sizeInput) {
+
             if (sizeOutput) {
                 sizeOutput.textContent = sizeInput.value;
             }
-        });
-    }
 
-
-    if (repeatInput) {
-
-        if (repeatOutput) {
-            repeatOutput.textContent = repeatInput.value;
+            sizeInput.addEventListener("input", () => {
+                if (sizeOutput) {
+                    sizeOutput.textContent = sizeInput.value;
+                }
+            });
         }
 
-        repeatInput.addEventListener("input", () => {
+
+        if (repeatInput) {
+
             if (repeatOutput) {
                 repeatOutput.textContent = repeatInput.value;
             }
-        });
-    }
+
+            repeatInput.addEventListener("input", () => {
+                if (repeatOutput) {
+                    repeatOutput.textContent = repeatInput.value;
+                }
+            });
+        }
 
 
-    if (runButton) {
+        if (runButton) {
 
-        runButton.addEventListener(
-            "click",
-            runSamplingExperiment
-        );
-    }
+            runButton.addEventListener(
+                "click",
+                runSamplingExperiment
+            );
+        }
 
 }
 // ==========================================
@@ -6116,7 +6594,7 @@ function attachInteractions() {
 
 
 function runGeneratorExperiment() {
-    const demo = currentLab?.generator?.demo;
+    const demo = getActiveGeneratorDemo();
     const result = document.getElementById("generatorResult");
     if (!demo || !result) return;
 
@@ -6621,6 +7099,1300 @@ function sampleHistogram(sample, qualities) {
         count: counts[q] || 0,
         frequency: (counts[q] || 0) / n
     }));
+}
+// ==========================================
+// GENERATOR — CSV PARSER
+// ==========================================
+
+function detectGeneratorDelimiter(source) {
+
+    const firstLine = source
+        .split(/\r?\n/)
+        .find(line => line.trim());
+
+    if (!firstLine) return ",";
+
+    let commas = 0;
+    let semicolons = 0;
+    let insideQuotes = false;
+
+    for (let i = 0; i < firstLine.length; i++) {
+
+        const char = firstLine[i];
+
+        if (char === '"') {
+            insideQuotes = !insideQuotes;
+            continue;
+        }
+
+        if (!insideQuotes) {
+
+            if (char === ",") commas++;
+            if (char === ";") semicolons++;
+
+        }
+    }
+
+    return semicolons > commas ? ";" : ",";
+}
+
+
+// Разбираем CSV с учётом кавычек и разделителей внутри текста.
+
+function parseGeneratorCSV(source) {
+
+    const text = String(source).replace(/^\uFEFF/, "");
+
+    const delimiter = detectGeneratorDelimiter(text);
+
+    const table = [];
+
+    let row = [];
+    let cell = "";
+    let insideQuotes = false;
+
+    for (let i = 0; i < text.length; i++) {
+
+        const char = text[i];
+
+        if (char === '"') {
+
+            // Двойные кавычки внутри CSV-ячейки.
+            if (insideQuotes && text[i + 1] === '"') {
+
+                cell += '"';
+                i++;
+
+            } else {
+
+                insideQuotes = !insideQuotes;
+
+            }
+
+        } else if (char === delimiter && !insideQuotes) {
+
+            row.push(cell.trim());
+            cell = "";
+
+        } else if (char === "\n" && !insideQuotes) {
+
+            row.push(cell.trim());
+
+            if (row.some(value => value !== "")) {
+                table.push(row);
+            }
+
+            row = [];
+            cell = "";
+
+        } else if (char !== "\r") {
+
+            cell += char;
+
+        }
+    }
+
+    // Последняя строка.
+    row.push(cell.trim());
+
+    if (row.some(value => value !== "")) {
+        table.push(row);
+    }
+
+    if (table.length < 2) {
+        throw new Error("CSV не содержит строк с наблюдениями.");
+    }
+
+    const headers = table[0].map(header =>
+        header
+            .trim()
+            .toLowerCase()
+            .replace(/[\s_\-()]/g, "")
+    );
+
+    const alcoholIndex = headers.indexOf("alcohol");
+    const qualityIndex = headers.indexOf("quality");
+
+    if (alcoholIndex === -1 || qualityIndex === -1) {
+        throw new Error(
+            "Не найдены столбцы alcohol и quality."
+        );
+    }
+
+    function parseNumber(value) {
+
+        let normalized = String(value)
+            .trim()
+            .replace(/\s/g, "");
+
+        // Поддержка десятичной запятой в CSV с разделителем ";".
+        if (delimiter === ";" && /^\-?\d+,\d+$/.test(normalized)) {
+            normalized = normalized.replace(",", ".");
+        }
+
+        if (normalized === "") return NaN;
+
+        return Number(normalized);
+    }
+
+    const observations = table.slice(1);
+
+    const rows = [];
+
+    observations.forEach(record => {
+
+        const alcohol = parseNumber(record[alcoholIndex]);
+        const quality = parseNumber(record[qualityIndex]);
+
+        if (
+            Number.isFinite(alcohol) &&
+            alcohol > 0 &&
+            Number.isInteger(quality)
+        ) {
+
+            rows.push({
+                alcohol,
+                quality
+            });
+
+        }
+
+    });
+
+    if (rows.length < 2) {
+        throw new Error(
+            "Не удалось получить достаточное количество корректных наблюдений."
+        );
+    }
+
+    return {
+        rows,
+        invalidCount: observations.length - rows.length,
+        delimiter
+    };
+}
+
+
+// ==========================================
+// GENERATOR — kNN MODEL
+// ==========================================
+
+function calculateKnnQualityDistribution(
+    trainingRows,
+    targetAlcohol,
+    requestedK
+) {
+
+    if (!Array.isArray(trainingRows) || trainingRows.length === 0) {
+        throw new Error("Обучающая выборка пуста.");
+    }
+
+    if (!Number.isFinite(targetAlcohol)) {
+        throw new Error("Некорректное значение alcohol.");
+    }
+
+    const k = Math.max(
+        1,
+        Math.min(
+            trainingRows.length,
+            Math.floor(requestedK)
+        )
+    );
+
+    // Расстояние в одномерном пространстве признака alcohol.
+    const nearest = trainingRows
+        .map((row, index) => ({
+            ...row,
+            distance: Math.abs(row.alcohol - targetAlcohol),
+            originalIndex: index
+        }))
+        .sort((a, b) =>
+            a.distance - b.distance ||
+            a.originalIndex - b.originalIndex
+        )
+        .slice(0, k);
+
+    // Все классы качества, присутствующие в обучающей выборке.
+    const qualities = [
+        ...new Set(trainingRows.map(row => row.quality))
+    ].sort((a, b) => a - b);
+
+    const counts = new Map(
+        qualities.map(quality => [quality, 0])
+    );
+
+    nearest.forEach(row => {
+        counts.set(
+            row.quality,
+            (counts.get(row.quality) || 0) + 1
+        );
+    });
+
+    // Условные вероятности оценок среди k соседей.
+    const probabilities = qualities.map(
+        quality => counts.get(quality) / nearest.length
+    );
+
+    // Математическое ожидание условного распределения.
+    const mean = qualities.reduce(
+        (sum, quality, index) =>
+            sum + quality * probabilities[index],
+        0
+    );
+
+    // Дисперсия условного распределения.
+    const variance = qualities.reduce(
+        (sum, quality, index) =>
+            sum + probabilities[index] * (quality - mean) ** 2,
+        0
+    );
+
+    return {
+        alcohol: targetAlcohol,
+        unit: "% об.",
+        k: nearest.length,
+        qualities,
+        probabilities,
+        mean,
+        variance
+    };
+}
+
+// ==========================================
+// GENERATOR — FAST NEAREST NEIGHBORS
+// ==========================================
+
+function getNearestKnnRows(sortedRows, targetAlcohol, k) {
+
+    // Ищем первое наблюдение, у которого alcohol >= targetAlcohol.
+    let low = 0;
+    let high = sortedRows.length;
+
+    while (low < high) {
+
+        const middle = Math.floor((low + high) / 2);
+
+        if (sortedRows[middle].alcohol < targetAlcohol) {
+            low = middle + 1;
+        } else {
+            high = middle;
+        }
+    }
+
+    let left = low - 1;
+    let right = low;
+
+    const nearest = [];
+
+    while (nearest.length < k) {
+
+        if (left < 0) {
+
+            nearest.push(sortedRows[right]);
+            right++;
+
+            continue;
+        }
+
+        if (right >= sortedRows.length) {
+
+            nearest.push(sortedRows[left]);
+            left--;
+
+            continue;
+        }
+
+        const leftDistance = Math.abs(
+            sortedRows[left].alcohol - targetAlcohol
+        );
+
+        const rightDistance = Math.abs(
+            sortedRows[right].alcohol - targetAlcohol
+        );
+
+        // При одинаковом расстоянии выбираем меньший alcohol.
+        if (leftDistance <= rightDistance) {
+
+            nearest.push(sortedRows[left]);
+            left--;
+
+        } else {
+
+            nearest.push(sortedRows[right]);
+            right++;
+        }
+    }
+
+    return nearest;
+}
+
+
+// ==========================================
+// GENERATOR — TEST EVALUATION
+// ==========================================
+
+function evaluateGeneratorOnTest(
+    trainingRows,
+    testRows,
+    requestedK,
+    group = "all"
+) {
+
+    // Выбираем нужную группу.
+    const train = group === "all"
+        ? trainingRows
+        : trainingRows.filter(row => row.wineType === group);
+
+    const test = group === "all"
+        ? testRows
+        : testRows.filter(row => row.wineType === group);
+
+    if (train.length === 0 || test.length === 0) {
+        throw new Error("Недостаточно наблюдений для проверки модели.");
+    }
+
+    const k = Math.min(
+        Math.max(1, Math.floor(requestedK)),
+        train.length
+    );
+
+    // Сортируем обучение один раз.
+    const sortedTrain = [...train].sort(
+        (a, b) => a.alcohol - b.alcohol
+    );
+
+    // Классы качества, которые присутствуют в выбранной группе.
+    const qualities = [
+        ...new Set([
+            ...train.map(row => row.quality),
+            ...test.map(row => row.quality)
+        ])
+    ].sort((a, b) => a - b);
+
+    const actualCounts = new Map(
+        qualities.map(q => [q, 0])
+    );
+
+    const predictedProbabilitySums = new Map(
+        qualities.map(q => [q, 0])
+    );
+
+    let brierSum = 0;
+    let zeroProbabilityCount = 0;
+
+    // Проходим по каждому независимому тестовому наблюдению.
+    test.forEach(testRow => {
+
+        const neighbors = getNearestKnnRows(
+            sortedTrain,
+            testRow.alcohol,
+            k
+        );
+
+        const neighborCounts = new Map(
+            qualities.map(q => [q, 0])
+        );
+
+        neighbors.forEach(row => {
+
+            neighborCounts.set(
+                row.quality,
+                neighborCounts.get(row.quality) + 1
+            );
+
+        });
+
+        // Вероятности классов для данного тестового объекта.
+        const probabilities = new Map();
+
+        qualities.forEach(q => {
+
+            const probability =
+                neighborCounts.get(q) / neighbors.length;
+
+            probabilities.set(q, probability);
+
+            predictedProbabilitySums.set(
+                q,
+                predictedProbabilitySums.get(q) + probability
+            );
+
+        });
+
+        // Наблюдаемое качество.
+        actualCounts.set(
+            testRow.quality,
+            (actualCounts.get(testRow.quality) || 0) + 1
+        );
+
+        // Мультиномиальная ошибка Brier.
+        // Чем ближе к нулю, тем лучше вероятностный прогноз.
+        let observationBrier = 0;
+
+        qualities.forEach(q => {
+
+            const predicted = probabilities.get(q);
+
+            const observed = testRow.quality === q ? 1 : 0;
+
+            observationBrier += (predicted - observed) ** 2;
+
+        });
+
+        brierSum += observationBrier;
+
+        // Проверяем, была ли реальная оценка представлена
+        // среди ближайших соседей.
+        if ((probabilities.get(testRow.quality) || 0) === 0) {
+            zeroProbabilityCount++;
+        }
+
+    });
+
+    const n = test.length;
+
+    // Наблюдаемое и предсказанное маргинальные распределения.
+    const actualDistribution = qualities.map(q => ({
+        quality: q,
+        probability: actualCounts.get(q) / n
+    }));
+
+    const predictedDistribution = qualities.map(q => ({
+        quality: q,
+        probability: predictedProbabilitySums.get(q) / n
+    }));
+
+    // Total Variation Distance.
+    // Значение 0 означает полное совпадение распределений.
+    const tv = 0.5 * qualities.reduce((sum, q) => {
+
+        const actual =
+            actualCounts.get(q) / n;
+
+        const predicted =
+            predictedProbabilitySums.get(q) / n;
+
+        return sum + Math.abs(actual - predicted);
+
+    }, 0);
+
+    // Математическое ожидание реального тестового распределения.
+    const actualMean = actualDistribution.reduce(
+        (sum, item) =>
+            sum + item.quality * item.probability,
+        0
+    );
+
+    // Математическое ожидание модельного распределения.
+    const predictedMean = predictedDistribution.reduce(
+        (sum, item) =>
+            sum + item.quality * item.probability,
+        0
+    );
+
+    // Дисперсия реального распределения.
+    const actualVariance = actualDistribution.reduce(
+        (sum, item) =>
+            sum +
+            (item.quality - actualMean) ** 2 *
+            item.probability,
+        0
+    );
+
+    // Дисперсия модельного распределения.
+    const predictedVariance = predictedDistribution.reduce(
+        (sum, item) =>
+            sum +
+            (item.quality - predictedMean) ** 2 *
+            item.probability,
+        0
+    );
+
+    return {
+
+        group,
+        n,
+        k,
+
+        qualities,
+
+        actualDistribution,
+        predictedDistribution,
+
+        tv,
+
+        actualMean,
+        predictedMean,
+
+        actualVariance,
+        predictedVariance,
+
+        meanDifference: predictedMean - actualMean,
+
+        varianceDifference:
+            predictedVariance - actualVariance,
+
+        brierScore: brierSum / n,
+
+        zeroProbabilityRate:
+            zeroProbabilityCount / n
+
+    };
+}
+
+// ==========================================
+// GENERATOR — EVALUATION VIEW
+// ==========================================
+
+function renderGeneratorEvaluation(result) {
+
+    const maxProbability = Math.max(
+        ...result.actualDistribution.map(item => item.probability),
+        ...result.predictedDistribution.map(item => item.probability),
+        0.000001
+    );
+
+    const rows = result.qualities.map(quality => {
+
+        const actual = result.actualDistribution.find(
+            item => item.quality === quality
+        )?.probability || 0;
+
+        const predicted = result.predictedDistribution.find(
+            item => item.quality === quality
+        )?.probability || 0;
+
+        return `
+            <div class="generator-validation-row">
+
+                <strong>Q = ${quality}</strong>
+
+                <div class="generator-validation-bars">
+
+                    <div class="generator-validation-bar">
+                        <span>Реальные</span>
+
+                        <div class="generator-validation-track">
+                            <i style="width:${actual / maxProbability * 100}%"></i>
+                        </div>
+
+                        <b>${(actual * 100).toFixed(2)}%</b>
+                    </div>
+
+                    <div class="generator-validation-bar">
+                        <span>Модель</span>
+
+                        <div class="generator-validation-track">
+                            <i class="model-bar"
+                               style="width:${predicted / maxProbability * 100}%"></i>
+                        </div>
+
+                        <b>${(predicted * 100).toFixed(2)}%</b>
+                    </div>
+
+                </div>
+
+            </div>
+        `;
+    }).join("");
+
+    const groupLabels = {
+        all: "Все вина",
+        red: "Красное вино",
+        white: "Белое вино"
+    };
+
+    return `
+
+        <div class="generator-validation-heading">
+
+            <span class="tag">EVALUATION COMPLETE</span>
+
+            <span class="muted">
+                ${groupLabels[result.group]} ·
+                ${result.n.toLocaleString("ru-RU")} тестовых наблюдений ·
+                k = ${result.k}
+            </span>
+
+        </div>
+
+
+        <div class="generator-validation-metrics">
+
+            <div class="generator-validation-metric">
+                <small>TV distance</small>
+                <strong>${result.tv.toFixed(4)}</strong>
+                <span>Меньше — лучше</span>
+            </div>
+
+            <div class="generator-validation-metric">
+                <small>Brier score</small>
+                <strong>${result.brierScore.toFixed(4)}</strong>
+                <span>Меньше — лучше</span>
+            </div>
+
+            <div class="generator-validation-metric">
+                <small>Разница средних</small>
+                <strong>${result.meanDifference > 0 ? "+" : ""}${result.meanDifference.toFixed(4)}</strong>
+                <span>Модель − реальные данные</span>
+            </div>
+
+            <div class="generator-validation-metric">
+                <small>Разница дисперсий</small>
+                <strong>${result.varianceDifference > 0 ? "+" : ""}${result.varianceDifference.toFixed(4)}</strong>
+                <span>Модель − реальные данные</span>
+            </div>
+
+            <div class="generator-validation-metric">
+                <small>Реальное среднее</small>
+                <strong>${result.actualMean.toFixed(4)}</strong>
+                <span>Тестовая выборка</span>
+            </div>
+
+            <div class="generator-validation-metric">
+                <small>Модельное среднее</small>
+                <strong>${result.predictedMean.toFixed(4)}</strong>
+                <span>Усреднённые прогнозы</span>
+            </div>
+
+            <div class="generator-validation-metric">
+                <small>Реальная дисперсия</small>
+                <strong>${result.actualVariance.toFixed(4)}</strong>
+                <span>Тестовая выборка</span>
+            </div>
+
+            <div class="generator-validation-metric">
+                <small>Zero probability rate</small>
+                <strong>${(result.zeroProbabilityRate * 100).toFixed(2)}%</strong>
+                <span>Реальный класс не найден среди соседей</span>
+            </div>
+
+        </div>
+
+
+        <div class="generator-validation-chart">
+
+            <div class="section-head">
+                <div>
+                    <span class="tag">DISTRIBUTION COMPARISON</span>
+                    <h3>Реальные данные и прогноз модели</h3>
+                </div>
+            </div>
+
+            <div class="generator-validation-legend">
+
+                <span>
+                    <i></i>
+                    Реальные данные
+                </span>
+
+                <span>
+                    <i class="model-legend"></i>
+                    Модель kNN
+                </span>
+
+            </div>
+
+            ${rows}
+
+        </div>
+
+
+        <div class="note">
+
+            <strong>Интерпретация.</strong>
+
+            Total Variation Distance показывает расхождение
+            между маргинальными распределениями качества.
+
+            Brier score учитывает качество вероятностных прогнозов
+            для отдельных тестовых образцов.
+
+            Zero probability rate показывает долю наблюдений,
+            для которых ближайшие соседи не содержали
+            фактическую оценку качества.
+
+            Эти показатели необходимо анализировать совместно.
+            Низкая ошибка по среднему не гарантирует хорошего
+            воспроизведения всего распределения.
+
+        </div>
+
+    `;
+}
+
+
+// ==========================================
+// GENERATOR — RUN EVALUATION
+// ==========================================
+
+function runGeneratorEvaluation() {
+
+    const resultElement = document.getElementById(
+        "generatorEvaluationResult"
+    );
+
+    const groupSelect = document.getElementById(
+        "generatorEvaluationGroup"
+    );
+
+    const button = document.getElementById(
+        "runGeneratorEvaluation"
+    );
+
+    if (
+        !resultElement ||
+        !generatorTrainingRows.length ||
+        !generatorTestRows.length
+    ) {
+        return;
+    }
+
+    const group = groupSelect?.value || "all";
+
+    const k = Number(
+        document.getElementById("generatorKInput")?.value ||
+        currentLab?.generator?.k ||
+        720
+    );
+
+    if (button) {
+        button.disabled = true;
+        button.textContent = "ВЫЧИСЛЕНИЕ...";
+    }
+
+    try {
+
+        resultElement.innerHTML = `
+            <div class="empty-state">
+                Выполняется проверка ${group === "all" ? "всей тестовой выборки" : "выбранной группы"}...
+            </div>
+        `;
+
+        const evaluation = evaluateGeneratorOnTest(
+            generatorTrainingRows,
+            generatorTestRows,
+            k,
+            group
+        );
+
+        resultElement.innerHTML =
+            renderGeneratorEvaluation(evaluation);
+
+    } catch (error) {
+
+        console.error("Ошибка проверки kNN:", error);
+
+        resultElement.innerHTML = `
+            <div class="note">
+                Ошибка проверки модели: ${escapeHTML(error.message)}
+            </div>
+        `;
+
+    } finally {
+
+        if (button) {
+            button.disabled = false;
+            button.textContent = "ПРОВЕРИТЬ МОДЕЛЬ";
+        }
+
+    }
+}
+
+// ==========================================
+// GENERATOR — ACTIVE MODEL
+// ==========================================
+
+function getActiveGeneratorDemo() {
+
+    if (
+        activeGeneratorDemo &&
+        generatorTrainingLabId === currentLab?.id
+    ) {
+        return activeGeneratorDemo;
+    }
+
+    return currentLab?.generator?.demo || null;
+}
+
+
+// Обновляем визуальное представление условной модели.
+
+function updateGeneratorModelView(model) {
+
+    if (!model) return;
+
+    const title = document.getElementById(
+        "generatorModelTitle"
+    );
+
+    const metrics = document.getElementById(
+        "generatorModelMetrics"
+    );
+
+    const probabilityList = document.getElementById(
+        "generatorProbabilityList"
+    );
+
+    const cdfMount = document.getElementById(
+        "generatorCdfExplorerMount"
+    );
+
+    const sampleDescription = document.getElementById(
+        "generatorSampleDescription"
+    );
+
+    if (title) {
+
+        title.textContent =
+            `Условное распределение: alcohol = ${model.alcohol.toFixed(2)} ${model.unit}, k = ${model.k}`;
+    }
+
+    if (metrics) {
+
+        metrics.innerHTML = `
+            <div class="result-metric">
+                <small>Среднее модели</small>
+                <strong>${model.mean.toFixed(4)}</strong>
+            </div>
+
+            <div class="result-metric">
+                <small>Дисперсия модели</small>
+                <strong>${model.variance.toFixed(4)}</strong>
+            </div>
+
+            <div class="result-metric">
+                <small>Количество соседей</small>
+                <strong>${model.k}</strong>
+            </div>
+
+            <div class="result-metric">
+                <small>Метод</small>
+                <strong>kNN + inverse CDF</strong>
+            </div>
+        `;
+    }
+
+    if (probabilityList) {
+
+        probabilityList.innerHTML = model.qualities.map(
+            (quality, index) => {
+
+                const probability = model.probabilities[index];
+
+                return `
+                    <div class="composition-item">
+
+                        <div class="composition-label">
+
+                            <span>Оценка ${quality}</span>
+
+                            <strong>
+                                ${(probability * 100).toFixed(2)}%
+                            </strong>
+
+                        </div>
+
+                        <div class="progress">
+
+                            <div
+                                class="progress-fill"
+                                style="width:${probability * 100}%"
+                            ></div>
+
+                        </div>
+
+                    </div>
+                `;
+            }
+        ).join("");
+    }
+
+    // Перестраиваем CDF для нового условного распределения.
+    if (
+        cdfMount &&
+        typeof renderGeneratorCdfExplorer === "function"
+    ) {
+
+        cdfMount.innerHTML =
+            renderGeneratorCdfExplorer(model);
+    }
+
+    if (sampleDescription) {
+
+        sampleDescription.textContent =
+            `Генерация оценок из распределения k ближайших вин при alcohol = ${model.alcohol.toFixed(2)}% об.`;
+    }
+
+    // Старый результат больше не соответствует новой модели.
+    const result = document.getElementById("generatorResult");
+
+    if (result) {
+
+        result.innerHTML = `
+            <div class="empty-state">
+                Модель обновлена. Запусти генерацию новой выборки.
+            </div>
+        `;
+    }
+}
+
+
+// Пересчитываем условную модель при изменении параметров.
+
+function updateGeneratorKnnModel() {
+
+    const alcoholInput = document.getElementById(
+        "generatorAlcoholInput"
+    );
+
+    const kInput = document.getElementById(
+        "generatorKInput"
+    );
+
+    const alcoholOutput = document.getElementById(
+        "generatorAlcoholOutput"
+    );
+
+    const kOutput = document.getElementById(
+        "generatorKOutput"
+    );
+
+    if (
+        !generatorTrainingRows.length ||
+        !alcoholInput ||
+        !kInput
+    ) {
+        return;
+    }
+
+    const alcohol = Number(alcoholInput.value);
+    const k = Number(kInput.value);
+
+    const model = calculateKnnQualityDistribution(
+        generatorTrainingRows,
+        alcohol,
+        k
+    );
+
+    model.unit = currentLab?.generator?.demo?.unit || "% об.";
+
+    activeGeneratorDemo = model;
+    generatorTrainingLabId = currentLab?.id;
+
+    if (alcoholOutput) {
+        alcoholOutput.textContent = alcohol.toFixed(2);
+    }
+
+    if (kOutput) {
+        kOutput.textContent = model.k;
+    }
+
+    updateGeneratorModelView(model);
+}
+
+
+// ==========================================
+// GENERATOR — FETCH CSV
+// ==========================================
+
+async function fetchGeneratorCSV(path) {
+
+    const response = await fetch(path);
+
+    if (!response.ok) {
+        throw new Error(
+            `Не удалось загрузить ${path}. HTTP ${response.status}`
+        );
+    }
+
+    const source = await response.text();
+
+    return parseGeneratorCSV(source);
+}
+
+
+// ==========================================
+// GENERATOR — TRAIN / TEST SPLIT
+// ==========================================
+
+function splitGeneratorRows(
+    rows,
+    testFraction = 0.2,
+    seed = 20261112
+) {
+
+    const random = createSeededRandom(seed);
+
+    const shuffled = [...rows];
+
+    // Перемешивание Фишера — Йейтса.
+    for (let i = shuffled.length - 1; i > 0; i--) {
+
+        const j = Math.floor(random() * (i + 1));
+
+        [shuffled[i], shuffled[j]] =
+            [shuffled[j], shuffled[i]];
+    }
+
+    // Выделяем 20% для проверки.
+    const testSize = Math.ceil(
+        shuffled.length * testFraction
+    );
+
+    return {
+        test: shuffled.slice(0, testSize),
+        train: shuffled.slice(testSize)
+    };
+}
+
+
+// ==========================================
+// GENERATOR — LOAD AND CACHE DATASET
+// ==========================================
+
+async function getGeneratorDataset() {
+
+    if (generatorDatasetCache) {
+        return generatorDatasetCache;
+    }
+
+    // Не запускаем параллельно несколько одинаковых загрузок.
+    if (generatorDatasetPromise) {
+        return generatorDatasetPromise;
+    }
+
+    generatorDatasetPromise = (async () => {
+
+        const [redData, whiteData] = await Promise.all([
+
+            fetchGeneratorCSV(
+                "./data/winequality-red.csv"
+            ),
+
+            fetchGeneratorCSV(
+                "./data/winequality-white.csv"
+            )
+
+        ]);
+
+        // Помечаем тип вина, чтобы сохранить происхождение записей.
+        const redRows = redData.rows.map(row => ({
+            ...row,
+            wineType: "red"
+        }));
+
+        const whiteRows = whiteData.rows.map(row => ({
+            ...row,
+            wineType: "white"
+        }));
+
+        // Делим красное и белое вино отдельно.
+        // Так пропорции групп сохраняются и в train, и в test.
+        const redSplit = splitGeneratorRows(
+            redRows,
+            0.2,
+            20261112
+        );
+
+        const whiteSplit = splitGeneratorRows(
+            whiteRows,
+            0.2,
+            20261113
+        );
+
+        const dataset = {
+
+            train: [
+                ...redSplit.train,
+                ...whiteSplit.train
+            ],
+
+            test: [
+                ...redSplit.test,
+                ...whiteSplit.test
+            ],
+
+            redCount: redRows.length,
+            whiteCount: whiteRows.length,
+
+            invalidCount:
+                redData.invalidCount +
+                whiteData.invalidCount
+
+        };
+
+        generatorDatasetCache = dataset;
+
+        return dataset;
+
+    })().catch(error => {
+
+        // При ошибке разрешаем повторить загрузку.
+        generatorDatasetPromise = null;
+
+        throw error;
+    });
+
+    return generatorDatasetPromise;
+}
+
+
+// ==========================================
+// GENERATOR — AUTOMATIC DATA CONNECTION
+// ==========================================
+
+async function loadGeneratorTrainingData() {
+
+    const status = document.getElementById(
+        "generatorTrainingStatus"
+    );
+
+    const controls = document.getElementById(
+        "generatorKnnControls"
+    );
+
+    if (!status || !controls || !currentLab) {
+        return;
+    }
+
+    const requestedLabId = currentLab.id;
+
+    status.textContent =
+        "Загружаем красное и белое вино из папки data...";
+
+    controls.hidden = true;
+
+    try {
+
+        const dataset = await getGeneratorDataset();
+
+        // Пользователь мог переключить лабораторную,
+        // пока CSV загружались.
+        if (
+            currentLab?.id !== requestedLabId ||
+            !document.getElementById("generatorTrainingStatus")
+        ) {
+            return;
+        }
+
+        generatorTrainingRows = dataset.train;
+        generatorTestRows = dataset.test;
+
+        generatorTrainingLabId = currentLab.id;
+        activeGeneratorDemo = null;
+
+        const alcoholValues = generatorTrainingRows.map(
+            row => row.alcohol
+        );
+
+        const minAlcohol = Math.min(...alcoholValues);
+        const maxAlcohol = Math.max(...alcoholValues);
+
+        const alcoholInput = document.getElementById(
+            "generatorAlcoholInput"
+        );
+
+        const kInput = document.getElementById(
+            "generatorKInput"
+        );
+
+        if (!alcoholInput || !kInput) {
+            throw new Error(
+                "Не найдены элементы управления kNN."
+            );
+        }
+
+        // Диапазон крепости определяем автоматически.
+        alcoholInput.min = (
+            Math.floor(minAlcohol * 10) / 10
+        ).toFixed(1);
+
+        alcoholInput.max = (
+            Math.ceil(maxAlcohol * 10) / 10
+        ).toFixed(1);
+
+        alcoholInput.step = "0.1";
+
+        const initialAlcohol = Number(
+            currentLab.generator.demo.alcohol
+        );
+
+        alcoholInput.value = Math.min(
+            Number(alcoholInput.max),
+            Math.max(
+                Number(alcoholInput.min),
+                initialAlcohol
+            )
+        );
+
+        // Ограничиваем k объёмом обучающей выборки.
+        const maxK = Math.min(
+            2000,
+            generatorTrainingRows.length
+        );
+
+        kInput.min = 1;
+        kInput.max = maxK;
+        kInput.step = 1;
+
+        kInput.value = Math.min(
+            currentLab.generator.k || 720,
+            maxK
+        );
+
+        alcoholInput.disabled = false;
+        kInput.disabled = false;
+
+        controls.hidden = false;
+
+        const evaluationButton = document.getElementById(
+            "runGeneratorEvaluation"
+        );
+        
+        const evaluationGroup = document.getElementById(
+            "generatorEvaluationGroup"
+        );
+        
+        if (evaluationButton) {
+            evaluationButton.disabled = false;
+        }
+        
+        if (evaluationGroup) {
+            evaluationGroup.disabled = false;
+        }
+
+        status.textContent =
+            `Загружено ${(
+                dataset.redCount + dataset.whiteCount
+            ).toLocaleString("ru-RU")} наблюдений. ` +
+            `Красное: ${dataset.redCount}. ` +
+            `Белое: ${dataset.whiteCount}. ` +
+            `Обучение: ${dataset.train.length.toLocaleString("ru-RU")}. ` +
+            `Проверка: ${dataset.test.length.toLocaleString("ru-RU")}. ` +
+            `Некорректных строк: ${dataset.invalidCount}. ` +
+            `В kNN используются только обучающие данные.`;
+
+        // Считаем первую условную модель.
+        const runButton = document.getElementById("runGenerator");
+
+        if (runButton) {
+            runButton.disabled = false;
+        }
+
+        updateGeneratorKnnModel();
+
+    } catch (error) {
+
+        console.error(
+            "Ошибка подключения Wine Quality:",
+            error
+        );
+
+        status.textContent =
+            `Ошибка загрузки: ${error.message}. ` +
+            `Проверь расположение CSV-файлов в папке data.`;
+        }
 }
 
 
