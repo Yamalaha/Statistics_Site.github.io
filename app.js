@@ -82,13 +82,7 @@ function init() {
 // ==========================================
 
 function escapeHTML(value) {
-    return String(value ?? "").replace(/[&<>"']/g, char => ({
-        "&": "&amp;",
-        "<": "&lt;",
-        ">": "&gt;",
-        '"': "&quot;",
-        "'": "&#39;"
-    })[char]);
+    return window.StatLabCore.escapeHTML(value);
 }
 // ==========================================
 // ПЕРЕВОД ПОЛЬЗОВАТЕЛЬСКОГО ИНТЕРФЕЙСА
@@ -443,6 +437,17 @@ function observeUITranslations(root) {
 
 function renderLab(labId) {
 
+    if (sectionObserver) {
+        sectionObserver.disconnect();
+        sectionObserver = null;
+    }
+    if (currentLab?.id === "lab-02" && window.StatLabLab02?.destroy) {
+        window.StatLabLab02.destroy();
+    }
+    if ((currentLab?.id === "lab-03" || currentLab?.id === "lab-04") && window.StatLabMolecular?.destroy) {
+        window.StatLabMolecular.destroy();
+    }
+
     currentLab = LABS.find(lab => lab.id === labId);
 
     if (!currentLab) {
@@ -451,6 +456,20 @@ function renderLab(labId) {
     }
 
     document.title = `STAT LAB — ${currentLab.title}`;
+
+    // Каждая лабораторная получает собственную палитру; CSS и SVG-графики
+    // используют один набор переменных, чтобы цвет величины не менялся между разделами.
+    const palette = currentLab.palette || {};
+    document.body.dataset.lab = currentLab.id;
+    document.documentElement.style.setProperty("--lab-accent", palette.accent || "#945165");
+    document.documentElement.style.setProperty("--wine", palette.accent || "#945165");
+    document.documentElement.style.setProperty("--gold", (palette.series || [])[1] || "#B89A62");
+    document.documentElement.style.setProperty("--sage", (palette.series || [])[2] || "#788C7D");
+    document.documentElement.style.setProperty("--lab-accent-light", palette.accentLight || "#F1E5E8");
+    document.documentElement.style.setProperty("--wine-light", palette.accentLight || "#F1E5E8");
+    (palette.series || ["#945165", "#B89A62", "#788C7D"]).forEach((color, index) => {
+        document.documentElement.style.setProperty(`--series-${index + 1}`, color);
+    });
 
     const breadcrumb = document.getElementById("breadcrumb");
 
@@ -489,6 +508,11 @@ function renderLab(labId) {
 // ==========================================
 
 function renderNavigation() {
+
+    if (currentLab?.id === "lab-02" && window.StatLabLab02) {
+        window.StatLabLab02.renderNavigation();
+        return;
+    }
 
     const nav = document.getElementById("sectionNav");
 
@@ -557,6 +581,24 @@ function renderContent() {
     }
 
     const lab = currentLab;
+
+    if (lab?.id === "lab-02" && window.StatLabLab02) {
+        if (uiTranslationObserver) {
+            uiTranslationObserver.disconnect();
+            uiTranslationObserver = null;
+        }
+        window.StatLabLab02.render(page);
+        return;
+    }
+
+    if ((lab?.id === "lab-03" || lab?.id === "lab-04") && window.StatLabMolecular) {
+        if (uiTranslationObserver) {
+            uiTranslationObserver.disconnect();
+            uiTranslationObserver = null;
+        }
+        window.StatLabMolecular.render(page, lab);
+        return;
+    }
 
     page.innerHTML = `
 
@@ -794,6 +836,10 @@ function renderOverview(lab) {
 
 function renderDataset(lab) {
 
+    const datasetPending = (lab.id === "lab-03" || lab.id === "lab-04")
+        ? `<div class="dataset-pending"><strong>Данные ещё не подключены.</strong> В текущем комплекте сайта отсутствует итоговый CSV для этой лабораторной. Структура исследования и палитра подготовлены, но статистики и графики не подменяются вымышленными значениями. Подключите очищенный CSV из соответствующего ноутбука, чтобы активировать расчёты.</div>`
+        : "";
+
     const data = lab.dataset || {};
 
     const groups = Array.isArray(data.groups)
@@ -837,6 +883,7 @@ function renderDataset(lab) {
     return `
 
         <section class="section" id="dataset">
+            ${datasetPending}
 
             ${sectionHeader(
                 "01 / ПРОФИЛЬ ДАННЫХ",
@@ -1233,7 +1280,7 @@ function renderVariable(variable, index) {
 
                     <div class="statistics-grid">
 
-                        ${variable.statistics.map(stat => `
+                        ${(variable.statistics || []).map(stat => `
                             <div class="stat">
 
                                 <small>
@@ -1271,7 +1318,7 @@ function renderVariable(variable, index) {
 
                     </div>
 
-                    ${renderBarChart(variable.chart)}
+                    ${renderBarChart(variable.chart, index)}
 
                 </div>
 
@@ -1293,7 +1340,7 @@ function renderVariable(variable, index) {
 // 10. SVG BAR CHART
 // ==========================================
 
-function renderBarChart(chart) {
+function renderBarChart(chart, seriesIndex = 0) {
 
     const labels = chart.labels;
     const values = chart.values;
@@ -1364,7 +1411,7 @@ function renderBarChart(chart) {
                 width="${barWidth}"
                 height="${barHeight}"
                 rx="5"
-                class="chart-bar"
+                class="chart-bar chart-bar-${(seriesIndex % 3) + 1}"
             />
 
             <text
@@ -1480,17 +1527,16 @@ function renderDependence(lab) {
                 <div class="dependence-controls">
 
                     <div class="control-field">
-                        <label for="dependenceScenario">
-                            Сценарий зависимости
-                        </label>
-
-                        <select id="dependenceScenario" class="select">
-                            <option value="0">Связь отсутствует</option>
-                            <option value="0.25">Слабая положительная</option>
-                            <option value="0.65" selected>Умеренная положительная</option>
-                            <option value="-0.55">Умеренная отрицательная</option>
-                        </select>
-                    </div>
+                    <label for="dependenceGroup">
+                        Исследуемая группа
+                    </label>
+                
+                    <select id="dependenceGroup" class="select">
+                        <option value="all" selected>Все вина</option>
+                        <option value="red">Красное вино</option>
+                        <option value="white">Белое вино</option>
+                    </select>
+                </div>
 
                     <div class="control-field">
                         <label for="dependenceSize">
@@ -1907,7 +1953,9 @@ function renderSampling(lab) {
                             При увеличении размера выборки стандартная ошибка
                             среднего уменьшается. При отборе без возвращения
                             дополнительно учитывается поправка на конечную
-                            генеральную совокупность.
+                            генеральную совокупность. Значения на графике заранее
+                            рассчитаны в ноутбуке; кнопка выше запускает отдельное
+                            моделирование с выбранными параметрами.
                         </div>
     
                     </div>
@@ -1996,8 +2044,9 @@ function getAlcoholDistributionData(lab, group) {
             sigma: logSigma
         },
 
-        exponential: {
-            lambda: 1 / mean
+        gamma: {
+            shape: mean ** 2 / variance,
+            scale: variance / mean
         }
 
     };
@@ -2046,7 +2095,7 @@ function renderDistributionFitting(lab) {
             ${sectionHeader(
                 "06A / DISTRIBUTION MODELS",
                 "Сравнение теоретических распределений",
-                "Изучение формы нормального, логнормального и экспоненциального распределений."
+                "Изучение формы нормального, логнормального и гамма-распределения."
             )}
 
             <div class="card distribution-lab">
@@ -2083,6 +2132,8 @@ function renderDistributionFitting(lab) {
                             id="distributionGroup"
                             class="select"
                         >
+
+                            <option value="all">Все вина</option>
 
                             <option value="red">
                                 Red wine
@@ -2212,28 +2263,24 @@ function renderDistributionFitting(lab) {
 
                     <div class="distribution-model-control">
 
-                        <span class="tag">EXPONENTIAL DISTRIBUTION</span>
+                        <span class="tag">GAMMA DISTRIBUTION</span>
 
-                        <h4>Экспоненциальное распределение</h4>
+                        <h4>Гамма-распределение</h4>
 
                         <div class="distribution-range">
-
-                            <label for="exponentialLambda">
-                                Интенсивность λ
-                                <output id="exponentialLambdaOutput">
-                                    ${initial.exponential.lambda.toFixed(3)}
-                                </output>
+                            <label for="gammaShape">
+                                Параметр формы k
+                                <output id="gammaShapeOutput">${initial.gamma.shape.toFixed(3)}</output>
                             </label>
+                            <input type="range" id="gammaShape" min="10" max="200" step="0.1" value="${initial.gamma.shape}" />
+                        </div>
 
-                            <input
-                                type="range"
-                                id="exponentialLambda"
-                                min="0.04"
-                                max="0.2"
-                                step="0.001"
-                                value="${initial.exponential.lambda}"
-                            />
-
+                        <div class="distribution-range">
+                            <label for="gammaScale">
+                                Параметр масштаба θ
+                                <output id="gammaScaleOutput">${initial.gamma.scale.toFixed(4)}</output>
+                            </label>
+                            <input type="range" id="gammaScale" min="0.03" max="0.30" step="0.001" value="${initial.gamma.scale}" />
                         </div>
 
                     </div>
@@ -2254,15 +2301,14 @@ function renderDistributionFitting(lab) {
 
             <div class="note">
 
-                <strong>Важно.</strong>
+                <strong>Методика.</strong>
 
-                Начальные параметры рассчитаны методом моментов
-                по агрегированным характеристикам alcohol.
-
-                Теоретические кривые не являются эмпирическими
-                распределениями Wine Quality. Для расчёта AIC,
-                KS и полноценного сравнения моделей необходимы
-                индивидуальные наблюдения.
+                Параметры моделей автоматически оцениваются методом
+                максимального правдоподобия по индивидуальным наблюдениям
+                alcohol из CSV. Ползунки позволяют вручную менять параметры.
+                AIC используется для сравнения моделей; KS D приводится
+                как мера расхождения без p-value, поскольку параметры
+                оценены на той же выборке.
 
             </div>
 
@@ -2307,269 +2353,238 @@ function lognormalPDF(x, mu, sigma) {
 }
 
 
-// Плотность экспоненциального распределения.
-
-function exponentialPDF(x, lambda) {
-
-    if (x < 0 || lambda <= 0) return 0;
-
-    return lambda * Math.exp(-lambda * x);
+// Плотность гамма-распределения с параметрами формы k и масштаба θ.
+function gammaPDF(x, shape, scale) {
+    if (x <= 0 || shape <= 0 || scale <= 0) return 0;
+    const logDensity = (shape - 1) * Math.log(x) - x / scale -
+        logGamma(shape) - shape * Math.log(scale);
+    return Math.exp(logDensity);
 }
 
 // ==========================================
 // DISTRIBUTION FITTING — SVG CHART
 // ==========================================
 
-function drawDistributionChart(models, observedMean) {
+function normalCDFForDistribution(x, mu, sigma) {
 
+    // Численное приближение функции распределения стандартной нормы.
+    const z = (x - mu) / sigma;
+    const sign = z < 0 ? -1 : 1;
+    const a = Math.abs(z) / Math.sqrt(2);
+    const t = 1 / (1 + 0.3275911 * a);
+    const erf = 1 - (((((1.061405429 * t - 1.453152027) * t)
+        + 1.421413741) * t - 0.284496736) * t
+        + 0.254829592) * t * Math.exp(-a * a);
+    return 0.5 * (1 + sign * erf);
+}
+
+// Двустороннее p-value стандартного нормального распределения.
+// Для больших z используем асимптотическую формулу,
+// чтобы избежать потери точности при вычислении 1 - CDF.
+
+function normalTwoSidedLogP(z) {
+
+    z = Math.abs(z);
+    if (!Number.isFinite(z)) return z === Infinity ? -Infinity : NaN;
+    if (z === 0) return 0;
+
+    if (z < 4) {
+        const p = 2 * (1 - normalCDF(z));
+        return p > 0 ? Math.log(p) : -Infinity;
+    }
+
+    // Асимптотика Миллса сохраняет log(p) даже при p < Number.MIN_VALUE.
+    const inverseSquare = 1 / (z * z);
+    const correction = 1 - inverseSquare + 3 * inverseSquare ** 2 -
+        15 * inverseSquare ** 3 + 105 * inverseSquare ** 4 -
+        945 * inverseSquare ** 5;
+
+    return Math.log(2) - z * z / 2 - Math.log(z) -
+        0.5 * Math.log(2 * Math.PI) + Math.log(correction);
+}
+
+function normalTwoSidedP(z) {
+    return Math.exp(normalTwoSidedLogP(z));
+}
+
+// Регуляризованная нижняя неполная гамма-функция P(a, x).
+function regularizedGammaP(a, x) {
+    if (!(a > 0) || x < 0 || !Number.isFinite(x)) {
+        return x === Infinity && a > 0 ? 1 : NaN;
+    }
+    if (x === 0) return 0;
+
+    const maxIterations = 10000;
+    const epsilon = 3e-14;
+    const fpMin = 1e-300;
+    const logFactor = -x + a * Math.log(x) - logGamma(a);
+
+    if (x < a + 1) {
+        let ap = a;
+        let term = 1 / a;
+        let sum = term;
+        for (let n = 1; n <= maxIterations; n++) {
+            ap += 1;
+            term *= x / ap;
+            sum += term;
+            if (Math.abs(term) <= Math.abs(sum) * epsilon) break;
+        }
+        return Math.min(1, Math.max(0, sum * Math.exp(logFactor)));
+    }
+
+    let b = x + 1 - a;
+    let c = 1 / fpMin;
+    let d = 1 / b;
+    let h = d;
+    for (let i = 1; i <= maxIterations; i++) {
+        const an = -i * (i - a);
+        b += 2;
+        d = an * d + b;
+        if (Math.abs(d) < fpMin) d = fpMin;
+        c = b + an / c;
+        if (Math.abs(c) < fpMin) c = fpMin;
+        d = 1 / d;
+        const delta = d * c;
+        h *= delta;
+        if (Math.abs(delta - 1) < epsilon) break;
+    }
+    const q = Math.exp(logFactor) * h;
+    return Math.min(1, Math.max(0, 1 - q));
+}
+
+function distributionCDF(x, modelName, params) {
+    if (modelName === "normal") {
+        return normalCDFForDistribution(x, params.mu, params.sigma);
+    }
+    if (modelName === "lognormal") {
+        return x <= 0 ? 0 : normalCDFForDistribution(Math.log(x), params.mu, params.sigma);
+    }
+    return x <= 0 ? 0 : regularizedGammaP(params.shape, x / params.scale);
+}
+
+function calculateDistributionFit(values, models) {
+    const n = values.length;
+    const sorted = [...values].sort((a, b) => a - b);
+    const sum = values.reduce((a, b) => a + b, 0);
+    const results = [];
+
+    const specs = [
+        { key: "normal", name: "Normal", k: 2, params: models.normal },
+        { key: "lognormal", name: "Lognormal", k: 2, params: models.lognormal },
+        { key: "gamma", name: "Gamma", k: 2, params: models.gamma }
+    ];
+
+    for (const spec of specs) {
+        let logLikelihood = 0;
+        for (const x of values) {
+            if (spec.key === "normal") {
+                const { mu, sigma } = spec.params;
+                logLikelihood += -Math.log(sigma) - 0.5 * Math.log(2 * Math.PI)
+                    - ((x - mu) ** 2) / (2 * sigma ** 2);
+            } else if (spec.key === "lognormal") {
+                if (x <= 0) { logLikelihood = -Infinity; break; }
+                const { mu, sigma } = spec.params;
+                const lx = Math.log(x);
+                logLikelihood += -Math.log(x) - Math.log(sigma) - 0.5 * Math.log(2 * Math.PI)
+                    - ((lx - mu) ** 2) / (2 * sigma ** 2);
+            } else {
+                const { shape, scale } = spec.params;
+                if (x <= 0) { logLikelihood = -Infinity; break; }
+                logLikelihood += (shape - 1) * Math.log(x) - x / scale -
+                    logGamma(shape) - shape * Math.log(scale);
+            }
+        }
+
+        let ksD = 0;
+        sorted.forEach((x, i) => {
+            const fittedCDF = distributionCDF(x, spec.key, spec.params);
+            const dPlus = (i + 1) / n - fittedCDF;
+            const dMinus = fittedCDF - i / n;
+            ksD = Math.max(ksD, dPlus, dMinus);
+        });
+
+        results.push({
+            ...spec,
+            logLikelihood,
+            aic: 2 * spec.k - 2 * logLikelihood,
+            ksD
+        });
+    }
+
+    return results;
+}
+
+function drawDistributionChart(models, values) {
     const width = 760;
-    const height = 350;
-
+    const height = 370;
     const left = 65;
     const right = 25;
     const top = 25;
-    const bottom = 60;
-
+    const bottom = 58;
     const plotWidth = width - left - right;
     const plotHeight = height - top - bottom;
+    const minX = Math.max(0, Math.min(...values));
+    const maxX = Math.max(...values);
+    const xMin = Math.max(0, minX - 0.5);
+    const xMax = maxX + 0.5;
+    const binCount = Math.max(12, Math.min(32, Math.ceil(Math.sqrt(values.length))));
+    const binWidth = (xMax - xMin) / binCount;
+    const bins = Array(binCount).fill(0);
+    values.forEach(value => {
+        const index = Math.min(binCount - 1, Math.max(0, Math.floor((value - xMin) / binWidth)));
+        bins[index]++;
+    });
+    const histogram = bins.map((count, i) => ({
+        x: xMin + (i + 0.5) * binWidth,
+        density: count / (values.length * binWidth)
+    }));
 
-    const normal = models.normal;
-    const lognormal = models.lognormal;
-    const exponential = models.exponential;
-
-    const logMean = Math.exp(
-        lognormal.mu + lognormal.sigma ** 2 / 2
-    );
-
-    const logVariance = (
-        Math.exp(lognormal.sigma ** 2) - 1
-    ) * Math.exp(
-        2 * lognormal.mu + lognormal.sigma ** 2
-    );
-
-    const logSD = Math.sqrt(logVariance);
-
-    // Автоматически выбираем диапазон X.
-    const xMax = Math.max(
-        normal.mu + 4 * normal.sigma,
-        logMean + 4 * logSD,
-        3 / exponential.lambda,
-        observedMean + 4
-    );
-
-    const samples = 180;
-
-    const calculateCurves = [];
-
-    for (let i = 0; i <= samples; i++) {
-
-        const x = i / samples * xMax;
-
-        calculateCurves.push({
-
+    const curves = [];
+    for (let i = 0; i <= 240; i++) {
+        const x = xMin + (xMax - xMin) * i / 240;
+        curves.push({
             x,
-
-            normal: normalPDF(
-                x,
-                normal.mu,
-                normal.sigma
-            ),
-
-            lognormal: lognormalPDF(
-                x,
-                lognormal.mu,
-                lognormal.sigma
-            ),
-
-            exponential: exponentialPDF(
-                x,
-                exponential.lambda
-            )
-
+            normal: normalPDF(x, models.normal.mu, models.normal.sigma),
+            lognormal: lognormalPDF(x, models.lognormal.mu, models.lognormal.sigma),
+            gamma: gammaPDF(x, models.gamma.shape, models.gamma.scale)
         });
     }
 
     const maxDensity = Math.max(
-        ...calculateCurves.flatMap(point => [
-            point.normal,
-            point.lognormal,
-            point.exponential
-        ])
-    );
+        ...histogram.map(d => d.density),
+        ...curves.flatMap(d => [d.normal, d.lognormal, d.gamma])
+    ) * 1.12;
+    const scaleX = x => left + (x - xMin) / (xMax - xMin) * plotWidth;
+    const scaleY = y => top + plotHeight - y / maxDensity * plotHeight;
+    const pathFor = key => curves.map((point, i) =>
+        `${i === 0 ? "M" : "L"}${scaleX(point.x).toFixed(2)},${scaleY(point[key]).toFixed(2)}`
+    ).join(" ");
 
-    const yMax = maxDensity * 1.15;
-
-    const scaleX = value =>
-        left + value / xMax * plotWidth;
-
-    const scaleY = value =>
-        top + plotHeight -
-        value / yMax * plotHeight;
-
-    let svg = "";
-
-    // Сетка Y.
+    let svg = `<svg class="distribution-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Гистограмма alcohol и подогнанные плотности распределений">`;
     for (let i = 0; i <= 4; i++) {
-
-        const value = yMax * i / 4;
-        const y = scaleY(value);
-
-        svg += `
-            <line
-                x1="${left}"
-                y1="${y}"
-                x2="${width - right}"
-                y2="${y}"
-                class="grid-line"
-            />
-
-            <text
-                x="${left - 10}"
-                y="${y + 4}"
-                text-anchor="end"
-                class="chart-label"
-            >
-                ${value.toFixed(3)}
-            </text>
-        `;
+        const yValue = maxDensity * i / 4;
+        const y = scaleY(yValue);
+        svg += `<line x1="${left}" y1="${y}" x2="${width-right}" y2="${y}" class="grid-line" />`;
+        svg += `<text x="${left-9}" y="${y+4}" text-anchor="end" class="chart-label">${yValue.toFixed(2)}</text>`;
     }
-
-    // Подписи X.
-    for (let i = 0; i <= 5; i++) {
-
-        const value = xMax * i / 5;
-        const x = scaleX(value);
-
-        svg += `
-            <text
-                x="${x}"
-                y="${height - 30}"
-                text-anchor="middle"
-                class="chart-label"
-            >
-                ${value.toFixed(1)}
-            </text>
-        `;
-    }
-
-    // Формируем кривые распределений.
-    const series = [
-        {
-            key: "normal",
-            className: "distribution-curve-normal"
-        },
-        {
-            key: "lognormal",
-            className: "distribution-curve-lognormal"
-        },
-        {
-            key: "exponential",
-            className: "distribution-curve-exponential"
-        }
-    ];
-
-    series.forEach(item => {
-
-        const path = calculateCurves.map((point, index) => {
-
-            const x = scaleX(point.x);
-            const y = scaleY(point[item.key]);
-
-            return `${index === 0 ? "M" : "L"} ${x} ${y}`;
-
-        }).join(" ");
-
-        svg += `
-            <path
-                d="${path}"
-                class="${item.className}"
-            />
-        `;
+    histogram.forEach((bin, i) => {
+        const x = left + i * plotWidth / binCount;
+        const barWidth = plotWidth / binCount;
+        const y = scaleY(bin.density);
+        svg += `<rect x="${x+1}" y="${y}" width="${Math.max(1,barWidth-2)}" height="${top+plotHeight-y}" class="chart-bar" opacity="0.38" />`;
     });
-
-    // Среднее исходной группы.
-    const meanX = scaleX(observedMean);
-
-    svg += `
-        <line
-            x1="${meanX}"
-            y1="${top}"
-            x2="${meanX}"
-            y2="${top + plotHeight}"
-            class="distribution-observed-marker"
-        />
-
-        <text
-            x="${meanX}"
-            y="${top - 8}"
-            text-anchor="middle"
-            class="chart-label"
-        >
-            Observed mean
-        </text>
-
-        <line
-            x1="${left}"
-            y1="${top + plotHeight}"
-            x2="${width - right}"
-            y2="${top + plotHeight}"
-            class="axis-line"
-        />
-
-        <text
-            x="${width / 2}"
-            y="${height - 5}"
-            text-anchor="middle"
-            class="chart-label"
-        >
-            Alcohol content (% vol.)
-        </text>
-
-        <text
-            x="15"
-            y="${height / 2}"
-            text-anchor="middle"
-            transform="rotate(-90 15 ${height / 2})"
-            class="chart-label"
-        >
-            Probability density
-        </text>
-    `;
-
-    return `
-        <svg
-            viewBox="0 0 ${width} ${height}"
-            class="chart distribution-chart"
-            role="img"
-            aria-label="Comparison of normal, lognormal and exponential probability density functions"
-        >
-            ${svg}
-        </svg>
-
-        <div class="distribution-legend">
-
-            <span>
-                <i class="legend-line distribution-legend-normal"></i>
-                Normal
-            </span>
-
-            <span>
-                <i class="legend-line distribution-legend-lognormal"></i>
-                Lognormal
-            </span>
-
-            <span>
-                <i class="legend-line distribution-legend-exponential"></i>
-                Exponential
-            </span>
-
-            <span>
-                <i class="legend-line distribution-legend-observed"></i>
-                Observed mean
-            </span>
-
-        </div>
-    `;
+    svg += `<path d="${pathFor("normal")}" class="distribution-curve-normal" />`;
+    svg += `<path d="${pathFor("lognormal")}" class="distribution-curve-lognormal" />`;
+    svg += `<path d="${pathFor("gamma")}" class="distribution-curve-gamma" />`;
+    for (let i = 0; i <= 5; i++) {
+        const xValue = xMin + (xMax-xMin)*i/5;
+        const x = scaleX(xValue);
+        svg += `<text x="${x}" y="${height-25}" text-anchor="middle" class="chart-label">${xValue.toFixed(1)}</text>`;
+    }
+    svg += `<text x="${left+plotWidth/2}" y="${height-4}" text-anchor="middle" class="chart-label">Alcohol (% vol.)</text>`;
+    svg += `</svg>`;
+    svg += `<div class="distribution-legend"><span><i class="legend-line distribution-legend-observed"></i>Гистограмма</span><span><i class="legend-line distribution-legend-normal"></i>Normal</span><span><i class="legend-line distribution-legend-lognormal"></i>Lognormal</span><span><i class="legend-line distribution-legend-gamma"></i>Gamma</span></div>`;
+    return svg;
 }
 
 // ==========================================
@@ -2580,7 +2595,7 @@ function calculateDistributionModelStats(models) {
 
     const normal = models.normal;
     const lognormal = models.lognormal;
-    const exponential = models.exponential;
+    const gamma = models.gamma;
 
     // Нормальное распределение.
     const normalStats = {
@@ -2601,10 +2616,10 @@ function calculateDistributionModelStats(models) {
         )
     };
 
-    // Экспоненциальное распределение.
-    const exponentialStats = {
-        mean: 1 / exponential.lambda,
-        variance: 1 / exponential.lambda ** 2
+    // Гамма-распределение.
+    const gammaStats = {
+        mean: gamma.shape * gamma.scale,
+        variance: gamma.shape * gamma.scale ** 2
     };
 
     return [
@@ -2623,10 +2638,10 @@ function calculateDistributionModelStats(models) {
         },
 
         {
-            name: "Exponential",
+            name: "Gamma",
             parameters:
-                `λ = ${exponential.lambda.toFixed(3)}`,
-            ...exponentialStats
+                `k = ${gamma.shape.toFixed(3)}, θ = ${gamma.scale.toFixed(4)}`,
+            ...gammaStats
         }
     ];
 }
@@ -2635,272 +2650,188 @@ function calculateDistributionModelStats(models) {
 // DISTRIBUTION FITTING — UPDATE
 // ==========================================
 
-function updateDistributionFitting() {
+function estimateGammaMLE(values) {
+    const n = values.length;
+    const mean = values.reduce((sum, x) => sum + x, 0) / n;
+    const meanLog = values.reduce((sum, x) => sum + Math.log(x), 0) / n;
+    const s = Math.log(mean) - meanLog;
+    if (!(s > 0)) throw new Error("Невозможно оценить параметры гамма-распределения для этих данных.");
 
-    const groupSelect =
-        document.getElementById("distributionGroup");
-
-    const result =
-        document.getElementById("distributionFittingResult");
-
-    if (!groupSelect || !result || !currentLab) return;
-
-    const observed = getAlcoholDistributionData(
-        currentLab,
-        groupSelect.value
-    );
-
-    if (!observed) {
-        result.innerHTML = emptyState(
-            "Недостаточно данных для сравнения распределений."
-        );
-        return;
-    }
-
-    // Считываем параметры трёх моделей.
-    const models = {
-
-        normal: {
-            mu: Number(
-                document.getElementById("normalMu").value
-            ),
-
-            sigma: Number(
-                document.getElementById("normalSigma").value
-            )
-        },
-
-        lognormal: {
-            mu: Number(
-                document.getElementById("lognormalMu").value
-            ),
-
-            sigma: Number(
-                document.getElementById("lognormalSigma").value
-            )
-        },
-
-        exponential: {
-            lambda: Number(
-                document.getElementById("exponentialLambda").value
-            )
-        }
-
+    let shape = (3 - s + Math.sqrt((s - 3) ** 2 + 24 * s)) / (12 * s);
+    const digamma = value => {
+        let x = value, result = 0;
+        while (x < 8) { result -= 1 / x; x += 1; }
+        const inv = 1 / x, inv2 = inv * inv;
+        return result + Math.log(x) - inv / 2 - inv2 / 12 + inv2 ** 2 / 120 -
+            inv2 ** 3 / 252 + inv2 ** 4 / 240 - 5 * inv2 ** 5 / 660;
+    };
+    const trigamma = value => {
+        let x = value, result = 0;
+        while (x < 8) { result += 1 / (x * x); x += 1; }
+        const inv = 1 / x, inv2 = inv * inv;
+        return result + inv + inv2 / 2 + inv2 * inv / 6 - inv2 ** 2 * inv / 30 +
+            inv2 ** 3 * inv / 42 - inv2 ** 4 * inv / 30 + 5 * inv2 ** 5 * inv / 66;
     };
 
-    // Проверка параметров.
-    const parameters = [
-        models.normal.mu,
-        models.normal.sigma,
-        models.lognormal.mu,
-        models.lognormal.sigma,
-        models.exponential.lambda
-    ];
-
-    if (
-        !parameters.every(Number.isFinite) ||
-        models.normal.sigma <= 0 ||
-        models.lognormal.sigma <= 0 ||
-        models.exponential.lambda <= 0
-    ) {
-        result.innerHTML = emptyState(
-            "Параметры распределений должны быть корректными положительными числами."
-        );
-        return;
+    for (let i = 0; i < 30; i++) {
+        const f = Math.log(shape) - digamma(shape) - s;
+        const derivative = 1 / shape - trigamma(shape);
+        const next = shape - f / derivative;
+        if (!(next > 0) || !Number.isFinite(next)) break;
+        if (Math.abs(next - shape) <= 1e-12 * Math.max(1, shape)) { shape = next; break; }
+        shape = next;
     }
+    return { shape, scale: mean / shape };
+}
 
-    // Обновляем числовые значения возле ползунков.
-    const outputs = [
-        ["normalMuOutput", models.normal.mu],
-        ["normalSigmaOutput", models.normal.sigma],
-        ["lognormalMuOutput", models.lognormal.mu],
-        ["lognormalSigmaOutput", models.lognormal.sigma],
-        ["exponentialLambdaOutput", models.exponential.lambda]
-    ];
+async function updateDistributionFitting() {
+    const groupSelect = document.getElementById("distributionGroup");
+    const result = document.getElementById("distributionFittingResult");
+    if (!groupSelect || !result || !currentLab) return;
 
-    outputs.forEach(([id, value]) => {
+    result.innerHTML = `<div class="empty-state">Загрузка исходных наблюдений...</div>`;
+    try {
+        const dataset = await getGeneratorDataset();
+        const values = dataset.allRows
+            .filter(row => groupSelect.value === "all" || row.wineType === groupSelect.value)
+            .map(row => row.alcohol)
+            .filter(Number.isFinite);
+        if (values.length < 2) throw new Error("Недостаточно исходных наблюдений.");
 
-        const element = document.getElementById(id);
-
-        if (element) {
-            element.textContent = value.toFixed(3);
+        const models = {
+            normal: {
+                mu: Number(document.getElementById("normalMu").value),
+                sigma: Number(document.getElementById("normalSigma").value)
+            },
+            lognormal: {
+                mu: Number(document.getElementById("lognormalMu").value),
+                sigma: Number(document.getElementById("lognormalSigma").value)
+            },
+            gamma: {
+                shape: Number(document.getElementById("gammaShape").value),
+                scale: Number(document.getElementById("gammaScale").value)
+            }
+        };
+        const parameters = [models.normal.mu, models.normal.sigma, models.lognormal.mu,
+            models.lognormal.sigma, models.gamma.shape, models.gamma.scale];
+        if (!parameters.every(Number.isFinite) || models.normal.sigma <= 0 ||
+            models.lognormal.sigma <= 0 || models.gamma.shape <= 0 || models.gamma.scale <= 0) {
+            throw new Error("Параметры распределений должны быть корректными.");
         }
 
-    });
+        const outputs = [
+            ["normalMuOutput", models.normal.mu], ["normalSigmaOutput", models.normal.sigma],
+            ["lognormalMuOutput", models.lognormal.mu], ["lognormalSigmaOutput", models.lognormal.sigma],
+            ["gammaShapeOutput", models.gamma.shape], ["gammaScaleOutput", models.gamma.scale]
+        ];
+        outputs.forEach(([id, value]) => {
+            const el = document.getElementById(id);
+            if (el) el.textContent = value.toFixed(3);
+        });
 
-    // Рассчитываем теоретические характеристики моделей.
-    const modelStats = calculateDistributionModelStats(models);
+        const mean = values.reduce((a,b) => a+b, 0) / values.length;
+        const variance = values.reduce((a,x) => a + (x-mean)**2, 0) / (values.length-1);
 
-    // Таблица сравнения.
-    const tableRows = modelStats.map(model => `
+        // AIC считаем только по MLE-параметрам; ползунки влияют только на график.
+        const n = values.length;
+        const mleVariance = values.reduce((sum, x) => sum + (x - mean) ** 2, 0) / n;
+        const logs = values.map(Math.log);
+        const logMean = logs.reduce((a, b) => a + b, 0) / n;
+        const logSigma = Math.sqrt(logs.reduce((sum, x) => sum + (x - logMean) ** 2, 0) / n);
+        const mleModels = {
+            normal: { mu: mean, sigma: Math.sqrt(mleVariance) },
+            lognormal: { mu: logMean, sigma: logSigma },
+            gamma: estimateGammaMLE(values)
+        };
+        const fit = calculateDistributionFit(values, mleModels);
+        const best = [...fit].sort((a,b) => a.aic-b.aic)[0];
+        const parameterText = item => item.key === "normal"
+            ? `μ=${item.params.mu.toFixed(3)}, σ=${item.params.sigma.toFixed(3)}`
+            : item.key === "lognormal"
+                ? `μlog=${item.params.mu.toFixed(3)}, σlog=${item.params.sigma.toFixed(3)}`
+                : `k=${item.params.shape.toFixed(3)}, θ=${item.params.scale.toFixed(4)}`;
+        const rows = fit.map(item => `
+            <tr>
+                <td><strong>${item.name}</strong>${item.key === best.key ? ' <span class="tag">BEST AIC</span>' : ''}</td>
+                <td>${parameterText(item)}</td>
+                <td>${item.logLikelihood.toFixed(2)}</td>
+                <td>${item.aic.toFixed(2)}</td>
+                <td>${item.ksD.toFixed(4)}</td>
+            </tr>
+        `).join("");
 
-        <tr>
-
-            <td>
-                <strong>${escapeHTML(model.name)}</strong>
-            </td>
-
-            <td>
-                ${escapeHTML(model.parameters)}
-            </td>
-
-            <td>
-                ${model.mean.toFixed(4)}
-            </td>
-
-            <td>
-                ${model.variance.toFixed(4)}
-            </td>
-
-        </tr>
-
-    `).join("");
-
-    result.innerHTML = `
-
-        <div class="distribution-observed-metrics">
-
-            <div class="result-metric">
-
-                <small>Observed mean</small>
-
-                <strong>${observed.mean.toFixed(4)}</strong>
-
+        result.innerHTML = `
+            <div class="distribution-observed-metrics">
+                <div class="result-metric"><small>Observations</small><strong>${values.length.toLocaleString("ru-RU")}</strong></div>
+                <div class="result-metric"><small>Observed mean</small><strong>${mean.toFixed(4)}</strong></div>
+                <div class="result-metric"><small>Sample variance</small><strong>${variance.toFixed(4)}</strong></div>
             </div>
-
-            <div class="result-metric">
-
-                <small>Observed variance</small>
-
-                <strong>${observed.variance.toFixed(4)}</strong>
-
+            <div class="distribution-chart-block">
+                <div class="section-head"><div><span class="tag">EMPIRICAL DATA + FITTED PDF</span><h3>Гистограмма и теоретические плотности</h3></div></div>
+                ${drawDistributionChart(models, values)}
             </div>
-
-            <div class="result-metric">
-
-                <small>Sample size</small>
-
-                <strong>
-                    ${observed.sampleSize.toLocaleString("ru-RU")}  
-                </strong>
-
-            </div>
-
-        </div>
-
-
-        <div class="distribution-chart-block">
-
-            <div class="section-head">
-
-                <div>
-                    <span class="tag">PROBABILITY DENSITY FUNCTIONS</span>
-
-                    <h3>Сравнение форм распределений</h3>
+            <div class="distribution-table-wrap">
+                <div class="section-head"><div><span class="tag">MODEL SELECTION</span><h3>Сравнение качества подгонки</h3></div></div>
+                <div class="distribution-table-scroll">
+                    <table class="distribution-table">
+                        <thead><tr><th>Модель</th><th>Параметры MLE</th><th>Log-likelihood</th><th>AIC ↓</th><th>KS D ↓</th></tr></thead>
+                        <tbody>${rows}</tbody>
+                    </table>
                 </div>
-
             </div>
-
-            ${drawDistributionChart(models, observed.mean)}
-
-        </div>
-
-
-        <div class="distribution-table-wrap">
-
-            <div class="section-head">
-
-                <div>
-                    <span class="tag">THEORETICAL MOMENTS</span>
-
-                    <h3>Характеристики моделей</h3>
-                </div>
-
+            <div class="note">
+                <strong>Вывод.</strong> По критерию AIC наименьшее значение получила модель <strong>${best.name}</strong> (AIC = ${best.aic.toFixed(2)}). Сравниваются те же три семейства, что и в ноутбуке: нормальное, логнормальное и гамма-распределение. AIC рассчитан по MLE-параметрам; ползунки меняют только кривые на графике. KS D приводится как описательная мера без p-value, поскольку параметры оценены на той же выборке.
             </div>
-
-            <div class="distribution-table-scroll">
-
-                <table class="distribution-table">
-
-                    <thead>
-
-                        <tr>
-                            <th>Модель</th>
-                            <th>Параметры</th>
-                            <th>Теоретическое среднее</th>
-                            <th>Теоретическая дисперсия</th>
-                        </tr>
-
-                    </thead>
-
-                    <tbody>
-                        ${tableRows}
-                    </tbody>
-
-                </table>
-
-            </div>
-
-        </div>
-
-
-        <div class="note">
-
-            <strong>Интерпретация.</strong>
-
-            Среднее и дисперсия каждой модели зависят от её параметров.
-            При начальной настройке Normal и Lognormal согласуются
-            с первыми двумя моментами выбранной группы.
-
-            Exponential согласуется со средним, но его дисперсия
-            может существенно отличаться от наблюдаемой.
-
-            Это позволяет сравнивать математические свойства моделей,
-            но не определяет, какая из них лучше описывает исходные данные.
-
-        </div>
-
-    `;
+        `;
+    } catch (error) {
+        result.innerHTML = emptyState(`Ошибка анализа распределения: ${escapeHTML(error.message)}`);
+    }
 }
 
 // ==========================================
 // DISTRIBUTION FITTING — RESET
 // ==========================================
 
-function resetDistributionParameters() {
-
-    const groupSelect =
-        document.getElementById("distributionGroup");
-
+async function resetDistributionParameters() {
+    const groupSelect = document.getElementById("distributionGroup");
     if (!groupSelect || !currentLab) return;
-
-    const data = getAlcoholDistributionData(
-        currentLab,
-        groupSelect.value
-    );
-
-    if (!data) return;
-
-    const values = {
-        normalMu: data.normal.mu,
-        normalSigma: data.normal.sigma,
-        lognormalMu: data.lognormal.mu,
-        lognormalSigma: data.lognormal.sigma,
-        exponentialLambda: data.exponential.lambda
-    };
-
-    Object.entries(values).forEach(([id, value]) => {
-
-        const input = document.getElementById(id);
-
-        if (input) {
-            input.value = value;
-        }
-
-    });
-
-    updateDistributionFitting();
+    const result = document.getElementById("distributionFittingResult");
+    if (result) result.innerHTML = `<div class="empty-state">Оценка параметров методом максимального правдоподобия...</div>`;
+    try {
+        const dataset = await getGeneratorDataset();
+        const values = dataset.allRows
+            .filter(row => groupSelect.value === "all" || row.wineType === groupSelect.value)
+            .map(row => row.alcohol).filter(Number.isFinite);
+        if (values.length < 2) throw new Error("Недостаточно наблюдений для оценки параметров.");
+        const n = values.length;
+        const mean = values.reduce((a,b) => a+b, 0) / n;
+        const varianceMLE = values.reduce((a,x) => a + (x-mean)**2, 0) / n;
+        const sigma = Math.sqrt(varianceMLE);
+        const logs = values.map(Math.log);
+        const logMean = logs.reduce((a,b) => a+b, 0) / n;
+        const logSigma = Math.sqrt(logs.reduce((a,x) => a + (x-logMean)**2, 0) / n);
+        const fitted = {
+            normalMu: mean,
+            normalSigma: sigma,
+            lognormalMu: logMean,
+            lognormalSigma: logSigma,
+            gammaShape: estimateGammaMLE(values).shape,
+            gammaScale: estimateGammaMLE(values).scale
+        };
+        Object.entries(fitted).forEach(([id, value]) => {
+            const input = document.getElementById(id);
+            if (input) {
+                input.value = value;
+                const output = document.getElementById(`${id}Output`);
+                if (output) output.textContent = value.toFixed(3);
+            }
+        });
+        await updateDistributionFitting();
+    } catch (error) {
+        if (result) result.innerHTML = emptyState(`Ошибка загрузки данных: ${escapeHTML(error.message)}`);
+    }
 }
+
 // ==========================================
 // МЕТОДЫ ИССЛЕДОВАНИЯ
 // ==========================================
@@ -3183,122 +3114,14 @@ function renderMethods(lab) {
 // ==========================================
 
 function getNormalizationDataset(lab) {
-
-    const variable = Array.isArray(lab?.variables)
-        ? lab.variables.find(item => item.id === "quality")
-        : null;
-
-    const chart = variable?.chart;
-
-    if (
-        !Array.isArray(chart?.labels) ||
-        !Array.isArray(chart?.values) ||
-        chart.labels.length !== chart.values.length ||
-        chart.labels.length < 2
-    ) {
-        return null;
-    }
-
-    const values = chart.labels.map(Number);
-    const frequencies = chart.values.map(Number);
-
-    const valid =
-        values.every(Number.isFinite) &&
-        frequencies.every(value =>
-            Number.isFinite(value) && value >= 0
-        );
-
-    if (!valid) return null;
-
-    const total = frequencies.reduce(
-        (sum, value) => sum + value,
-        0
-    );
-
-    if (total < 2) return null;
-
-    const min = Math.min(...values);
-    const max = Math.max(...values);
-
-    if (max <= min) return null;
-
-    // Среднее с учётом частот.
-    const weightedSum = values.reduce(
-        (sum, value, index) =>
-            sum + value * frequencies[index],
-        0
-    );
-
-    const mean = weightedSum / total;
-
-    // Сумма квадратов отклонений.
-    const squaredSum = values.reduce(
-        (sum, value, index) =>
-            sum +
-            frequencies[index] * (value - mean) ** 2,
-        0
-    );
-
-    // Выборочная дисперсия: делим на N - 1.
-    const sampleVariance = squaredSum / (total - 1);
-
-    const sampleSD = Math.sqrt(sampleVariance);
-
-    if (!Number.isFinite(sampleSD) || sampleSD === 0) {
-        return null;
-    }
-
-    return {
-        variable,
-        values,
-        frequencies,
-        total,
-        min,
-        max,
-        mean,
-        sampleSD
-    };
+    return window.StatLabFrequencyStatistics.getNormalizationDataset(lab);
 }
-
-
-// Расчёт среднего и стандартного отклонения
-// для преобразованных значений с учётом частот.
 
 function calculateWeightedStats(values, frequencies) {
-
-    const total = frequencies.reduce(
-        (sum, value) => sum + value,
-        0
+    return window.StatLabFrequencyStatistics.calculateWeightedStats(
+        values, frequencies
     );
-
-    const mean = values.reduce(
-        (sum, value, index) =>
-            sum + value * frequencies[index],
-        0
-    ) / total;
-
-    const squaredSum = values.reduce(
-        (sum, value, index) =>
-            sum +
-            frequencies[index] * (value - mean) ** 2,
-        0
-    );
-
-    const sampleSD = total > 1
-        ? Math.sqrt(squaredSum / (total - 1))
-        : 0;
-
-    return {
-        total,
-        mean,
-        sampleSD
-    };
 }
-
-// ==========================================
-// NORMALIZATION CHART
-// ==========================================
-
 function drawNormalizationChart(
     values,
     frequencies,
@@ -3783,223 +3606,12 @@ function updateNormalizationExperiment() {
 // Используем, когда у нас есть значения и их количество.
 
 function calculateEDAFromFrequencies(chart) {
-
-    if (
-        !Array.isArray(chart?.labels) ||
-        !Array.isArray(chart?.values) ||
-        chart.labels.length !== chart.values.length ||
-        chart.labels.length < 2
-    ) {
-        return null;
-    }
-
-    const values = chart.labels.map(Number);
-    const frequencies = chart.values.map(Number);
-
-    const valid =
-        values.every(Number.isFinite) &&
-        frequencies.every(value =>
-            Number.isFinite(value) &&
-            value >= 0
-        );
-
-    if (!valid) return null;
-
-    const total = frequencies.reduce(
-        (sum, frequency) => sum + frequency,
-        0
-    );
-
-    if (total < 2) return null;
-
-    // Среднее с учётом частот.
-    const mean = values.reduce(
-        (sum, value, index) =>
-            sum + value * frequencies[index],
-        0
-    ) / total;
-
-    // Выборочная дисперсия.
-    const squaredSum = values.reduce(
-        (sum, value, index) =>
-            sum + frequencies[index] * (value - mean) ** 2,
-        0
-    );
-
-    const variance = squaredSum / (total - 1);
-    const standardDeviation = Math.sqrt(variance);
-
-    // Медиана с учётом частот.
-    function getValueAtRank(rank) {
-
-        let cumulativeFrequency = 0;
-
-        for (let i = 0; i < values.length; i++) {
-
-            cumulativeFrequency += frequencies[i];
-
-            if (cumulativeFrequency > rank) {
-                return values[i];
-            }
-        }
-
-        return null;
-    }
-
-    const median = total % 2 === 0
-        ? (
-            getValueAtRank(total / 2 - 1) +
-            getValueAtRank(total / 2)
-        ) / 2
-        : getValueAtRank(Math.floor(total / 2));
-
-    // Мода — значение с максимальной частотой.
-    const maxFrequency = Math.max(...frequencies);
-    const modeIndex = frequencies.indexOf(maxFrequency);
-
-    return {
-        total,
-        mean,
-        median,
-        mode: values[modeIndex],
-        variance,
-        standardDeviation,
-        min: Math.min(...values),
-        max: Math.max(...values)
-    };
+    return window.StatLabFrequencyStatistics.calculateEDAFromFrequencies(chart);
 }
-// ==========================================
-// EDA — IQR AND OUTLIER DETECTION
-// ==========================================
 
 function calculateIQRFromFrequencies(chart) {
-
-    if (
-        !Array.isArray(chart?.labels) ||
-        !Array.isArray(chart?.values) ||
-        chart.labels.length !== chart.values.length
-    ) {
-        return null;
-    }
-
-    // Преобразуем таблицу в пары:
-    // значение + количество наблюдений.
-
-    const pairs = chart.labels.map((label, index) => ({
-        value: Number(label),
-        frequency: Number(chart.values[index])
-    }));
-
-    const valid = pairs.every(item =>
-        Number.isFinite(item.value) &&
-        Number.isInteger(item.frequency) &&
-        item.frequency >= 0
-    );
-
-    if (!valid) return null;
-
-    pairs.sort((a, b) => a.value - b.value);
-
-    const observedPairs = pairs.filter(
-        item => item.frequency > 0
-    );
-
-    const total = observedPairs.reduce(
-        (sum, item) => sum + item.frequency,
-        0
-    );
-
-    if (total < 2 || observedPairs.length < 2) return null;
-
-    // Возвращает значение на заданной позиции
-    // в упорядоченной эмпирической совокупности.
-    // rank начинается с 1.
-
-    function getValueAtRank(rank) {
-
-        let cumulative = 0;
-
-        for (const item of observedPairs) {
-
-            cumulative += item.frequency;
-
-            if (cumulative >= rank) {
-                return item.value;
-            }
-        }
-
-        return null;
-    }
-
-    // Используем определение квантиля nearest rank.
-    const q1 = getValueAtRank(Math.ceil(total * 0.25));
-
-    const q2 = total % 2 === 0
-        ? (
-            getValueAtRank(total / 2) +
-            getValueAtRank(total / 2 + 1)
-        ) / 2
-        : getValueAtRank(Math.ceil(total / 2));
-
-    const q3 = getValueAtRank(Math.ceil(total * 0.75));
-
-    const iqr = q3 - q1;
-
-    const lowerFence = q1 - 1.5 * iqr;
-    const upperFence = q3 + 1.5 * iqr;
-
-    // Категории, попадающие за границы IQR.
-    const outlierGroups = observedPairs.filter(item =>
-        item.value < lowerFence ||
-        item.value > upperFence
-    );
-
-    const outlierCount = outlierGroups.reduce(
-        (sum, item) => sum + item.frequency,
-        0
-    );
-
-    const inlierValues = observedPairs
-        .filter(item =>
-            item.value >= lowerFence &&
-            item.value <= upperFence
-        )
-        .map(item => item.value);
-
-    return {
-
-        pairs: observedPairs,
-        total,
-
-        min: observedPairs[0].value,
-        max: observedPairs[observedPairs.length - 1].value,
-
-        q1,
-        q2,
-        q3,
-        iqr,
-
-        lowerFence,
-        upperFence,
-
-        outlierGroups,
-        outlierCount,
-
-        outlierShare: outlierCount / total * 100,
-
-        lowerWhisker: inlierValues.length
-            ? Math.min(...inlierValues)
-            : null,
-
-        upperWhisker: inlierValues.length
-            ? Math.max(...inlierValues)
-            : null
-    };
+    return window.StatLabFrequencyStatistics.calculateIQRFromFrequencies(chart);
 }
-
-// ==========================================
-// EDA — GROUP COMPARISON DATA
-// ==========================================
 
 function getGroupComparisonData(variable, lab) {
 
@@ -5192,6 +4804,7 @@ function renderGenerator(lab) {
                     class="experiment-metrics generator-model-metrics"
                     id="generatorModelMetrics"
                     style="margin-top:18px"
+                >
                     <div class="result-metric">
                         <small>Среднее модели</small>
                         <strong>${demo.mean.toFixed(4)}</strong>
@@ -5222,6 +4835,65 @@ function renderGenerator(lab) {
                 </div>
             </div>
 
+            <div class="card generator-training-card">
+            <div class="experiment-top">
+                <div>
+                    <span class="tag">DATA SOURCE</span>
+                    <h3>Обучающая выборка Wine Quality</h3>
+                    <p class="muted">
+                        Настрой параметры kNN. Модель будет пересчитана
+                        на основе обучающей выборки.
+                    </p>
+                </div>
+            </div>
+
+            <div id="generatorTrainingStatus" class="note">
+                Ожидание загрузки данных...
+            </div>
+
+            <div class="generator-knn-controls" id="generatorKnnControls" hidden>
+                <div class="control-field">
+                    <label for="generatorAlcoholInput">
+                        Крепость вина
+                        <output id="generatorAlcoholOutput">12.00</output>
+                    </label>
+                    <input
+                        type="range"
+                        id="generatorAlcoholInput"
+                        min="8"
+                        max="14"
+                        step="0.1"
+                        value="12"
+                        disabled
+                    >
+                </div>
+
+                <div class="control-field">
+                    <label for="generatorKInput">
+                        Количество соседей k
+                        <output id="generatorKOutput">720</output>
+                    </label>
+                    <input
+                        type="range"
+                        id="generatorKInput"
+                        min="10"
+                        max="2000"
+                        step="1"
+                        value="720"
+                        disabled
+                    >
+                </div>
+            </div>
+
+            <button
+                type="button"
+                id="reloadGeneratorData"
+                class="distribution-reset"
+            >
+                Повторить загрузку данных
+            </button>
+        </div>
+
             <div class="card experiment-card">
                 <div class="experiment-top">
                     <div>
@@ -5247,10 +4919,31 @@ function renderGenerator(lab) {
                         <input id="generatorSampleSize" type="range" min="50" max="5000" step="50" value="1000">
                         <div class="range-labels"><span>50</span><span>5000</span></div>
                     </div>
+                    
+                    <div class="control-field">
+                        <label for="generatorSeed">
+                            Seed генератора
+                        </label>
+                        <input
+                            id="generatorSeed"
+                            class="select"
+                            type="number"
+                            min="0"
+                            max="4294967295"
+                            step="1"
+                            value="20261118"
+                        >
+                        <small class="muted">
+                            Одинаковый seed и параметры дают одинаковую выборку.
+                        </small>
+                    </div>
+
                     <button id="runGenerator" class="primary-button" type="button" disabled>
                         <span>↗</span> СГЕНЕРИРОВАТЬ
                     </button>
                 </div>
+
+
 
                 <div id="generatorResult" class="simulation-result">
                     <div class="empty-state">Нажми «Сгенерировать», чтобы получить выборку.</div>
@@ -5265,8 +4958,8 @@ function renderGenerator(lab) {
                 <span class="tag">CONVERGENCE ANALYSIS</span>
                 <h3>Сходимость генератора</h3>
                 <p class="muted">
-                    Как увеличение размера выборки уменьшает ошибку
-                    оценки среднего и дисперсии.
+                    Предварительно рассчитанный эксперимент: как увеличение
+                    размера выборки уменьшает ошибку оценки среднего и дисперсии.
                 </p>
             </div>
             <span class="experiment-status">● READY</span>
@@ -5358,6 +5051,54 @@ function renderGenerator(lab) {
                     </div>
                 </div>
             ` : ""}
+            <div class="card generator-evaluation-card">
+            <div class="experiment-top">
+                <div>
+                    <span class="tag">MODEL VALIDATION</span>
+                    <h3>Проверка на независимой выборке</h3>
+                    <p class="muted">
+                        Сравнение вероятностных прогнозов kNN
+                        с реальными оценками тестовой выборки.
+                    </p>
+                </div>
+                <span class="experiment-status">● TEST</span>
+            </div>
+
+            <div class="generator-evaluation-controls">
+                <div class="control-field">
+                    <label for="generatorEvaluationGroup">
+                        Исследуемая группа
+                    </label>
+                    <select
+                        id="generatorEvaluationGroup"
+                        class="select"
+                        disabled
+                    >
+                        <option value="all">Все вина</option>
+                        <option value="red">Красное вино</option>
+                        <option value="white">Белое вино</option>
+                    </select>
+                </div>
+
+                <button
+                    type="button"
+                    id="runGeneratorEvaluation"
+                    class="primary-button"
+                    disabled
+                >
+                    ПРОВЕРИТЬ МОДЕЛЬ
+                </button>
+            </div>
+
+            <div
+                id="generatorEvaluationResult"
+                class="generator-evaluation-result"
+            >
+                <div class="empty-state">
+                    Сначала дождись загрузки обучающей и тестовой выборок.
+                </div>
+            </div>
+        </div>
         </section>
     `;
 
@@ -5963,168 +5704,27 @@ function updateGeneratorConvergence(metric = "mean") {
 // ==========================================
 
 function renderConclusions(lab) {
-
     return `
-
         <section class="section" id="conclusions">
-
             ${sectionHeader(
                 "08 / RESULTS",
                 "Итоги исследования",
                 "Основные результаты и интерпретация."
             )}
 
-            <div class="card generator-training-card">
-
-                <span class="tag">DATA SOURCE</span>
-
-                <h3>Обучающая выборка Wine Quality</h3>
-
-                <p class="muted">
-                    Исходные данные автоматически загружаются
-                    из локальных CSV-файлов проекта.
-                </p>
-
-                <div id="generatorTrainingStatus" class="note">
-                    Ожидание загрузки данных...
-                </div>
-
-                <div class="generator-knn-controls" id="generatorKnnControls" hidden>
-
-                    <div class="control-field">
-
-                        <label for="generatorAlcoholInput">
-                            Крепость вина
-                            <output id="generatorAlcoholOutput">12.00</output>
-                        </label>
-
-                        <input
-                            type="range"
-                            id="generatorAlcoholInput"
-                            min="8"
-                            max="14"
-                            step="0.1"
-                            value="12"
-                            disabled
-                        >
-
-                    </div>
-
-                    <div class="control-field">
-
-                        <label for="generatorKInput">
-                            Количество соседей k
-                            <output id="generatorKOutput">720</output>
-                        </label>
-
-                        <input
-                            type="range"
-                            id="generatorKInput"
-                            min="10"
-                            max="2000"
-                            step="1"
-                            value="720"
-                            disabled
-                        >
-
-                    </div>
-
-                    </div>
-
-                        <button
-                            type="button"
-                            id="reloadGeneratorData"
-                            class="distribution-reset"
-                        >
-                            Повторить загрузку данных
-                        </button>
-
-                    </div>
-
-                    <div class="card generator-evaluation-card">
-
-            <div class="experiment-top">
-
-                <div>
-                    <span class="tag">MODEL VALIDATION</span>
-
-                    <h3>Проверка на независимой выборке</h3>
-
-                    <p class="muted">
-                        Сравнение вероятностных прогнозов kNN
-                        с реальными оценками тестовой выборки.
-                    </p>
-                </div>
-
-                <span class="experiment-status">
-                    ● TEST
-                </span>
-
-            </div>
-
-            <div class="generator-evaluation-controls">
-
-                <div class="control-field">
-
-                    <label for="generatorEvaluationGroup">
-                        Исследуемая группа
-                    </label>
-
-                    <select
-                        id="generatorEvaluationGroup"
-                        class="select"
-                        disabled
-                    >
-                        <option value="all">Все вина</option>
-                        <option value="red">Красное вино</option>
-                        <option value="white">Белое вино</option>
-                    </select>
-
-                </div>
-
-                <button
-                    type="button"
-                    id="runGeneratorEvaluation"
-                    class="primary-button"
-                    disabled
-                >
-                    ПРОВЕРИТЬ МОДЕЛЬ
-                </button>
-
-            </div>
-
-            <div
-                id="generatorEvaluationResult"
-                class="generator-evaluation-result"
-            >
-
-                <div class="empty-state">
-                    Сначала дождись загрузки обучающей и тестовой выборок.
-                </div>
-
-            </div>
-
-        </div>
-
             <div class="card">
-
                 ${lab.conclusions.length
                     ? `
                         <ol class="conclusion-list">
-
                             ${lab.conclusions.map(item => `
                                 <li>${escapeHTML(item)}</li>
                             `).join("")}
-
                         </ol>
                     `
                     : emptyState("Выводы пока не добавлены.")
                 }
-
             </div>
-
         </section>
-
     `;
 }
 
@@ -6189,45 +5789,18 @@ function renderReferences(lab) {
 // ==========================================
 
 function sectionHeader(eyebrow, title, description) {
-
-    return `
-
-        <div class="section-head">
-
-            <div>
-                <div class="eyebrow">
-                    ${escapeHTML(eyebrow)}
-                </div>
-
-                <h2>${escapeHTML(title)}</h2>
-            </div>
-
-            <p>${escapeHTML(description)}</p>
-
-        </div>
-
-    `;
+    return window.StatLabComponents.sectionHeader(eyebrow, title, description);
 }
-
 
 function emptyState(message) {
-
-    return `
-
-        <div class="empty-state">
-            ${escapeHTML(message)}
-        </div>
-
-    `;
-
+    return window.StatLabComponents.emptyState(message);
 }
 
-
-// ==========================================
-// 18. INTERACTIONS
-// ==========================================
-
 function attachInteractions() {
+
+    if (currentLab?.id === "lab-02" && window.StatLabLab02) {
+        return;
+    }
 
     // ======================================
     // SAMPLING CONVERGENCE CHART
@@ -6242,26 +5815,28 @@ function attachInteractions() {
     // DEPENDENCE EXPERIMENT
     // ======================================
 
-    const dependenceScenario =
-        document.getElementById("dependenceScenario");
+    
+    const dependenceGroup =
+    document.getElementById("dependenceGroup");
 
     const dependenceSize =
-        document.getElementById("dependenceSize");
+    document.getElementById("dependenceSize");
 
-    if (dependenceScenario && dependenceSize) {
+    if (dependenceGroup && dependenceSize) {
 
-        dependenceScenario.addEventListener(
-            "change",
-            updateDependenceExperiment
-        );
+    dependenceGroup.addEventListener(
+        "change",
+        updateDependenceExperiment
+    );
 
-        dependenceSize.addEventListener(
-            "input",
-            updateDependenceExperiment
-        );
+    dependenceSize.addEventListener(
+        "input",
+        updateDependenceExperiment
+    );
 
-        updateDependenceExperiment();
+    updateDependenceExperiment();
     }
+
 
 
     // ======================================
@@ -6504,7 +6079,8 @@ function attachInteractions() {
                 "normalSigma",
                 "lognormalMu",
                 "lognormalSigma",
-                "exponentialLambda"
+                "gammaShape",
+                "gammaScale"
             ];
 
             parameterIds.forEach(id => {
@@ -6527,7 +6103,7 @@ function attachInteractions() {
                 resetDistributionParameters
             );
 
-            updateDistributionFitting();
+            resetDistributionParameters();
         }
 
 
@@ -6594,49 +6170,205 @@ function attachInteractions() {
 
 
 function runGeneratorExperiment() {
+
     const demo = getActiveGeneratorDemo();
     const result = document.getElementById("generatorResult");
+
     if (!demo || !result) return;
 
-    const n = Number(document.getElementById("generatorSampleSize")?.value || 1000);
-    if (!Number.isFinite(n) || n < 2) return;
+    const n = Number(
+        document.getElementById("generatorSampleSize")?.value || 1000
+    );
 
-    const sample = generateQualitySample(demo.qualities, demo.probabilities, n);
-    const hist = sampleHistogram(sample, demo.qualities);
+    const seed = Number(
+        document.getElementById("generatorSeed")?.value
+    );
 
-    const mean = sample.reduce((s, v) => s + v, 0) / n;
-    const variance = sample.reduce((s, v) => s + (v - mean) ** 2, 0) / (n - 1);
+    if (!Number.isInteger(n) || n < 2) {
+        result.innerHTML = emptyState(
+            "Размер выборки должен быть целым числом не меньше 2."
+        );
+        return;
+    }
 
-    const maxFreq = Math.max(...hist.map(h => h.frequency), 1e-9);
+    if (
+        !Number.isSafeInteger(seed) ||
+        seed < 0 ||
+        seed > 4294967295
+    ) {
+        result.innerHTML = emptyState(
+            "Укажи целый seed от 0 до 4294967295."
+        );
+        return;
+    }
+
+    const sample = generateQualitySample(
+        demo.qualities,
+        demo.probabilities,
+        n,
+        seed
+    );
+
+    const hist = sampleHistogram(
+        sample,
+        demo.qualities
+    );
+
+    const mean = sample.reduce(
+        (sum, value) => sum + value,
+        0
+    ) / n;
+
+    const variance = sample.reduce(
+        (sum, value) => sum + (value - mean) ** 2,
+        0
+    ) / (n - 1);
+
+    // Ошибки эмпирического распределения относительно модели.
+    const errors = hist.map((item, index) =>
+        item.frequency - demo.probabilities[index]
+    );
+
+    const tvDistance = 0.5 * errors.reduce(
+        (sum, error) => sum + Math.abs(error),
+        0
+    );
+
+    const rmse = Math.sqrt(
+        errors.reduce(
+            (sum, error) => sum + error ** 2,
+            0
+        ) / errors.length
+    );
+
+    const maxFrequency = Math.max(
+        ...hist.map(item => item.frequency),
+        ...demo.probabilities,
+        0.000001
+    );
+
+    const rows = hist.map((item, index) => {
+
+        const theoretical = demo.probabilities[index];
+
+        return `
+            <div class="generator-validation-row">
+
+                <strong>Q = ${item.quality}</strong>
+
+                <div class="generator-validation-bars">
+
+                    <div class="generator-validation-bar">
+                        <span>Модель</span>
+
+                        <div class="generator-validation-track">
+                            <i
+                                class="model-bar"
+                                style="width:${theoretical / maxFrequency * 100}%"
+                            ></i>
+                        </div>
+
+                        <b>${(theoretical * 100).toFixed(2)}%</b>
+                    </div>
+
+                    <div class="generator-validation-bar">
+                        <span>Выборка</span>
+
+                        <div class="generator-validation-track">
+                            <i
+                                style="width:${item.frequency / maxFrequency * 100}%"
+                            ></i>
+                        </div>
+
+                        <b>${(item.frequency * 100).toFixed(2)}%</b>
+                    </div>
+
+                </div>
+
+            </div>
+        `;
+    }).join("");
 
     result.innerHTML = `
+
         <div class="result-heading">
-            <span class="tag">ГОТОВО</span>
-            <span class="muted">${n.toLocaleString("ru-RU")} оценок</span>
+            <span class="tag">ЭКСПЕРИМЕНТ ЗАВЕРШЁН</span>
+            <span class="muted">
+                n = ${n.toLocaleString("ru-RU")} · seed = ${seed}
+            </span>
         </div>
+
         <div class="experiment-metrics">
-            ${renderResultMetric("Среднее выборки", mean.toFixed(4))}
-            ${renderResultMetric("Среднее модели", demo.mean.toFixed(4))}
-            ${renderResultMetric("Дисперсия выборки", variance.toFixed(4))}
-            ${renderResultMetric("Дисперсия модели", demo.variance.toFixed(4))}
+
+            ${renderResultMetric(
+                "Среднее выборки",
+                mean.toFixed(4)
+            )}
+
+            ${renderResultMetric(
+                "Среднее модели",
+                demo.mean.toFixed(4)
+            )}
+
+            ${renderResultMetric(
+                "Дисперсия выборки",
+                variance.toFixed(4)
+            )}
+
+            ${renderResultMetric(
+                "Дисперсия модели",
+                demo.variance.toFixed(4)
+            )}
+
+            ${renderResultMetric(
+                "TV distance",
+                tvDistance.toFixed(5)
+            )}
+
+            ${renderResultMetric(
+                "RMSE частот",
+                rmse.toFixed(5)
+            )}
+
         </div>
-        <div class="simulation-chart" style="margin-top:20px">
-            <h3>Частоты сгенерированных оценок</h3>
-            ${hist.map(h => `
-                <div class="composition-item">
-                    <div class="composition-label">
-                        <span>${h.quality}</span>
-                        <strong>${h.count} · ${(h.frequency * 100).toFixed(2)}%</strong>
-                    </div>
-                    <div class="progress">
-                        <div class="progress-fill" style="width:${(h.frequency / maxFreq) * 100}%"></div>
-                    </div>
+
+        <div class="generator-validation-chart">
+
+            <div class="section-head">
+                <div>
+                    <span class="tag">DISTRIBUTION COMPARISON</span>
+                    <h3>Теоретическое и эмпирическое распределения</h3>
                 </div>
-            `).join("")}
+            </div>
+
+            <div class="generator-validation-legend">
+                <span>
+                    <i class="model-legend"></i>
+                    Теоретическая модель
+                </span>
+
+                <span>
+                    <i></i>
+                    Сгенерированная выборка
+                </span>
+            </div>
+
+            ${rows}
+
         </div>
+
         <div class="note">
-            Сравни частоты с модельными вероятностями выше.
-            При большом n они должны сходиться (закон больших чисел).
+            <strong>Интерпретация.</strong>
+
+            TV distance равен половине суммы модулей
+            различий между эмпирическими и теоретическими
+            вероятностями.
+
+            RMSE показывает среднеквадратичное отклонение
+            частот по категориям качества.
+
+            Чем ближе оба показателя к нулю,
+            тем лучше выборка воспроизводит заданное распределение.
         </div>
     `;
 }
@@ -6646,18 +6378,8 @@ function runGeneratorExperiment() {
 // при одинаковых параметрах эксперимента.
 
 function createSeededRandom(seed = 12345) {
-    let state = seed >>> 0;
-
-    return function () {
-        state = (1664525 * state + 1013904223) >>> 0;
-        return state / 4294967296;
-    };
+    return window.StatLabRandom.createSeededRandom(seed);
 }
-
-
-// Стандартное нормальное распределение.
-// Метод Бокса — Мюллера.
-
 function randomNormal(random) {
     const u1 = Math.max(random(), Number.EPSILON);
     const u2 = random();
@@ -6669,131 +6391,50 @@ function randomNormal(random) {
 
 // Создание демонстрационных парных наблюдений.
 
-function generateDependenceData(size, targetCorrelation) {
-    const random = createSeededRandom(20261111);
 
-    const points = [];
+function generateDependenceData(rows, size) {
 
-    for (let i = 0; i < size; i++) {
-        const z1 = randomNormal(random);
-        const z2 = randomNormal(random);
-
-        const x = 10.5 + z1 * 1.1;
-
-        const y = 0.34 + (
-            targetCorrelation * z1 +
-            Math.sqrt(1 - targetCorrelation ** 2) * z2
-        ) * 0.16;
-
-        points.push({ x, y });
+    if (!Array.isArray(rows) || rows.length === 0) {
+        return [];
     }
 
-    return points;
+    const random = createSeededRandom(20261111);
+
+    // Перемешиваем реальные наблюдения.
+    const shuffled = [...rows];
+
+    for (let i = shuffled.length - 1; i > 0; i--) {
+
+        const j = Math.floor(random() * (i + 1));
+
+        [shuffled[i], shuffled[j]] =
+            [shuffled[j], shuffled[i]];
+    }
+
+    // Выбираем n наблюдений без возвращения.
+    return shuffled
+        .slice(0, Math.min(size, shuffled.length))
+        .map(row => ({
+            x: row.alcohol,
+            y: row.quality
+        }));
 }
+
 
 
 // Коэффициент корреляции Пирсона.
 
 function calculatePearson(points) {
-    const n = points.length;
-
-    const meanX = points.reduce((s, p) => s + p.x, 0) / n;
-    const meanY = points.reduce((s, p) => s + p.y, 0) / n;
-
-    let covariance = 0;
-    let varianceX = 0;
-    let varianceY = 0;
-
-    points.forEach(p => {
-        const dx = p.x - meanX;
-        const dy = p.y - meanY;
-
-        covariance += dx * dy;
-        varianceX += dx ** 2;
-        varianceY += dy ** 2;
-    });
-
-    const denominator = Math.sqrt(varianceX * varianceY);
-
-    return denominator === 0 ? 0 : covariance / denominator;
+    return window.StatLabDependence.calculatePearson(points);
 }
-
-
-// Преобразование значений в ранги.
-// Одинаковые значения получают средний ранг.
-
-function calculateRanks(values) {
-    const sorted = values
-        .map((value, index) => ({ value, index }))
-        .sort((a, b) => a.value - b.value);
-
-    const ranks = Array(values.length);
-
-    let i = 0;
-
-    while (i < sorted.length) {
-        let j = i;
-
-        while (
-            j + 1 < sorted.length &&
-            sorted[j + 1].value === sorted[i].value
-        ) {
-            j++;
-        }
-
-        const averageRank = (i + 1 + j + 1) / 2;
-
-        for (let k = i; k <= j; k++) {
-            ranks[sorted[k].index] = averageRank;
-        }
-
-        i = j + 1;
-    }
-
-    return ranks;
-}
-
-
-// Коэффициент корреляции Спирмена.
 
 function calculateSpearman(points) {
-    const ranksX = calculateRanks(points.map(p => p.x));
-    const ranksY = calculateRanks(points.map(p => p.y));
-
-    const rankedPoints = ranksX.map((x, i) => ({
-        x,
-        y: ranksY[i]
-    }));
-
-    return calculatePearson(rankedPoints);
+    return window.StatLabDependence.calculateSpearman(points);
 }
-
-
-// Интерпретация коэффициента корреляции.
 
 function interpretCorrelation(value) {
-    const abs = Math.abs(value);
-
-    let strength;
-
-    if (abs < 0.1) strength = "практически отсутствует";
-    else if (abs < 0.3) strength = "слабая";
-    else if (abs < 0.5) strength = "умеренная";
-    else if (abs < 0.7) strength = "заметная";
-    else if (abs < 0.9) strength = "высокая";
-    else strength = "очень высокая";
-
-    const direction = value > 0
-        ? "положительная"
-        : value < 0
-            ? "отрицательная"
-            : "нулевая";
-
-    return `${strength} ${direction} связь`;
+    return window.StatLabDependence.interpretCorrelation(value);
 }
-
-
-// Построение диаграммы рассеяния.
 
 function drawDependenceScatter(points) {
     const width = 740;
@@ -6898,7 +6539,7 @@ function drawDependenceScatter(points) {
             viewBox="0 0 ${width} ${height}"
             class="chart"
             role="img"
-            aria-label="Scatter plot of synthetic observations"
+            aria-label="Scatter plot of real wine observations"
         >
             ${elements}
 
@@ -6926,7 +6567,7 @@ function drawDependenceScatter(points) {
                 transform="rotate(-90 15 ${height / 2})"
                 class="chart-label"
             >
-                Volatile acidity
+                Wine quality        
             </text>
         </svg>
     `;
@@ -6935,709 +6576,169 @@ function drawDependenceScatter(points) {
 
 // Обновление всего эксперимента.
 
-function updateDependenceExperiment() {
-    const scenario = document.getElementById("dependenceScenario");
-    const sizeInput = document.getElementById("dependenceSize");
-    const output = document.getElementById("dependenceSizeOutput");
-    const result = document.getElementById("dependenceResult");
 
-    if (!scenario || !sizeInput || !result) return;
+async function updateDependenceExperiment() {
 
-    const targetCorrelation = Number(scenario.value);
+    const groupInput = document.getElementById(
+        "dependenceGroup"
+    );
+
+    const sizeInput = document.getElementById(
+        "dependenceSize"
+    );
+
+    const output = document.getElementById(
+        "dependenceSizeOutput"
+    );
+
+    const result = document.getElementById(
+        "dependenceResult"
+    );
+
+    if (!groupInput || !sizeInput || !result) {
+        return;
+    }
+
     const size = Number(sizeInput.value);
+    const group = groupInput.value;
 
     output.textContent = size;
 
-    const points = generateDependenceData(
-        size,
-        targetCorrelation
-    );
-
-    const pearson = calculatePearson(points);
-    const spearman = calculateSpearman(points);
-
     result.innerHTML = `
-        <div class="dependence-metrics">
-
-            <div class="result-metric">
-                <small>Sample size</small>
-                <strong>${size}</strong>
-            </div>
-
-            <div class="result-metric">
-                <small>Pearson r</small>
-                <strong>${pearson.toFixed(4)}</strong>
-            </div>
-
-            <div class="result-metric">
-                <small>Spearman ρ</small>
-                <strong>${spearman.toFixed(4)}</strong>
-            </div>
-
-        </div>
-
-        <div class="simulation-chart">
-
-            <div class="section-head">
-                <div>
-                    <span class="tag">SCATTER PLOT</span>
-                    <h3>Распределение парных наблюдений</h3>
-                </div>
-            </div>
-
-            ${drawDependenceScatter(points)}
-
-        </div>
-
         <div class="note">
-            <strong>Интерпретация Пирсона:</strong>
-            ${interpretCorrelation(pearson)}.
-
-            <br>
-
-            <strong>Интерпретация Спирмена:</strong>
-            ${interpretCorrelation(spearman)}.
+            Загрузка исходных наблюдений...
         </div>
     `;
+
+    try {
+
+        const dataset = await getGeneratorDataset();
+
+        let rows = dataset.allRows;
+
+        if (group === "red" || group === "white") {
+            rows = rows.filter(row => row.wineType === group);
+        }
+
+        if (rows.length < 2) {
+            throw new Error(
+                "Недостаточно наблюдений для анализа."
+            );
+        }
+
+        const points = generateDependenceData(
+            rows,
+            size
+        );
+
+        const pearson = calculatePearson(points);
+        const spearman = calculateSpearman(points);
+
+        result.innerHTML = `
+            <div class="dependence-metrics">
+
+                <div class="result-metric">
+                    <small>Sample size</small>
+                    <strong>${points.length}</strong>
+                </div>
+
+                <div class="result-metric">
+                    <small>Pearson r</small>
+                    <strong>${pearson.toFixed(4)}</strong>
+                </div>
+
+                <div class="result-metric">
+                    <small>Spearman ρ</small>
+                    <strong>${spearman.toFixed(4)}</strong>
+                </div>
+
+            </div>
+
+            <div class="simulation-chart">
+
+                <div class="section-head">
+                    <div>
+                        <span class="tag">REAL DATA</span>
+                        <h3>Алкоголь и качество вина</h3>
+                    </div>
+                </div>
+
+                ${drawDependenceScatter(points)}
+
+            </div>
+
+            <div class="note">
+                <strong>Интерпретация Пирсона:</strong>
+                ${interpretCorrelation(pearson)}.
+
+                <br>
+
+                <strong>Интерпретация Спирмена:</strong>
+                ${interpretCorrelation(spearman)}.
+
+                <br><br>
+
+                Анализ выполнен на реальных наблюдениях
+                из набора Wine Quality.
+                Выборка сформирована без возвращения.
+            </div>
+        `;
+
+    } catch (error) {
+
+        result.innerHTML = `
+            <div class="note">
+                <strong>Ошибка загрузки данных:</strong>
+                ${escapeHTML(error.message)}
+            </div>
+        `;
+    }
 }
+
 
 // ==========================================
 // Математика для генератора
 // ==========================================
 
 function buildCdf(probabilities) {
-
-    if (!Array.isArray(probabilities) || probabilities.length === 0) {
-        throw new Error("Массив вероятностей пуст.");
-    }
-
-    const values = probabilities.map(Number);
-
-    if (values.some(p => !Number.isFinite(p) || p < 0)) {
-        throw new Error("Вероятности должны быть конечными и неотрицательными.");
-    }
-
-    const total = values.reduce((sum, p) => sum + p, 0);
-
-    if (total <= 0) {
-        throw new Error("Сумма вероятностей должна быть больше нуля.");
-    }
-
-    // Нормализуем вероятности.
-    // Это также компенсирует небольшую погрешность округления.
-    let cumulative = 0;
-
-    const cdf = values.map(probability => {
-        cumulative += probability / total;
-        return cumulative;
-    });
-
-    // Гарантируем точную правую границу.
-    cdf[cdf.length - 1] = 1;
-
-    return cdf;
+    return window.StatLabRandom.buildCdf(probabilities);
 }
 
-function inverseCdfSample(qualities, cdf, u) {
-
-    if (
-        !Array.isArray(qualities) ||
-        qualities.length !== cdf.length
-    ) {
-        throw new Error("Размеры массивов qualities и CDF не совпадают.");
-    }
-
-    // Находим первую границу, которая строго больше U.
-    for (let i = 0; i < cdf.length; i++) {
-
-        if (u < cdf[i]) {
-            return qualities[i];
-        }
-    }
-
-    return qualities[qualities.length - 1];
+function inverseCdfSample(qualities, cdf, randomValue) {
+    return window.StatLabRandom.inverseCdfSample(qualities, cdf, randomValue);
 }
 
-function generateQualitySample(qualities, probabilities, n) {
-
-    if (
-        !Array.isArray(qualities) ||
-        qualities.length === 0 ||
-        qualities.length !== probabilities.length
-    ) {
-        throw new Error("Некорректные данные генератора.");
-    }
-
-    if (!Number.isInteger(n) || n < 1) {
-        throw new Error("Размер выборки должен быть положительным целым числом.");
-    }
-
-    // Важное улучшение:
-    // строим CDF один раз, а не для каждого элемента.
-    const cdf = buildCdf(probabilities);
-
-    const sample = new Array(n);
-
-    for (let i = 0; i < n; i++) {
-
-        sample[i] = inverseCdfSample(
-            qualities,
-            cdf,
-            Math.random()
-        );
-
-    }
-
-    return sample;
+function generateQualitySample(qualities, probabilities, size, seed = null) {
+    return window.StatLabRandom.generateQualitySample(
+        qualities, probabilities, size, seed
+    );
 }
+
 function sampleHistogram(sample, qualities) {
-    const counts = Object.fromEntries(qualities.map(q => [q, 0]));
-    sample.forEach(v => { counts[v] = (counts[v] || 0) + 1; });
-    const n = sample.length || 1;
-    return qualities.map(q => ({
-        quality: q,
-        count: counts[q] || 0,
-        frequency: (counts[q] || 0) / n
-    }));
+    return window.StatLabRandom.sampleHistogram(sample, qualities);
 }
 // ==========================================
 // GENERATOR — CSV PARSER
 // ==========================================
 
-function detectGeneratorDelimiter(source) {
-
-    const firstLine = source
-        .split(/\r?\n/)
-        .find(line => line.trim());
-
-    if (!firstLine) return ",";
-
-    let commas = 0;
-    let semicolons = 0;
-    let insideQuotes = false;
-
-    for (let i = 0; i < firstLine.length; i++) {
-
-        const char = firstLine[i];
-
-        if (char === '"') {
-            insideQuotes = !insideQuotes;
-            continue;
-        }
-
-        if (!insideQuotes) {
-
-            if (char === ",") commas++;
-            if (char === ";") semicolons++;
-
-        }
-    }
-
-    return semicolons > commas ? ";" : ",";
-}
-
-
-// Разбираем CSV с учётом кавычек и разделителей внутри текста.
-
 function parseGeneratorCSV(source) {
-
-    const text = String(source).replace(/^\uFEFF/, "");
-
-    const delimiter = detectGeneratorDelimiter(text);
-
-    const table = [];
-
-    let row = [];
-    let cell = "";
-    let insideQuotes = false;
-
-    for (let i = 0; i < text.length; i++) {
-
-        const char = text[i];
-
-        if (char === '"') {
-
-            // Двойные кавычки внутри CSV-ячейки.
-            if (insideQuotes && text[i + 1] === '"') {
-
-                cell += '"';
-                i++;
-
-            } else {
-
-                insideQuotes = !insideQuotes;
-
-            }
-
-        } else if (char === delimiter && !insideQuotes) {
-
-            row.push(cell.trim());
-            cell = "";
-
-        } else if (char === "\n" && !insideQuotes) {
-
-            row.push(cell.trim());
-
-            if (row.some(value => value !== "")) {
-                table.push(row);
-            }
-
-            row = [];
-            cell = "";
-
-        } else if (char !== "\r") {
-
-            cell += char;
-
-        }
-    }
-
-    // Последняя строка.
-    row.push(cell.trim());
-
-    if (row.some(value => value !== "")) {
-        table.push(row);
-    }
-
-    if (table.length < 2) {
-        throw new Error("CSV не содержит строк с наблюдениями.");
-    }
-
-    const headers = table[0].map(header =>
-        header
-            .trim()
-            .toLowerCase()
-            .replace(/[\s_\-()]/g, "")
-    );
-
-    const alcoholIndex = headers.indexOf("alcohol");
-    const qualityIndex = headers.indexOf("quality");
-
-    if (alcoholIndex === -1 || qualityIndex === -1) {
-        throw new Error(
-            "Не найдены столбцы alcohol и quality."
-        );
-    }
-
-    function parseNumber(value) {
-
-        let normalized = String(value)
-            .trim()
-            .replace(/\s/g, "");
-
-        // Поддержка десятичной запятой в CSV с разделителем ";".
-        if (delimiter === ";" && /^\-?\d+,\d+$/.test(normalized)) {
-            normalized = normalized.replace(",", ".");
-        }
-
-        if (normalized === "") return NaN;
-
-        return Number(normalized);
-    }
-
-    const observations = table.slice(1);
-
-    const rows = [];
-
-    observations.forEach(record => {
-
-        const alcohol = parseNumber(record[alcoholIndex]);
-        const quality = parseNumber(record[qualityIndex]);
-
-        if (
-            Number.isFinite(alcohol) &&
-            alcohol > 0 &&
-            Number.isInteger(quality)
-        ) {
-
-            rows.push({
-                alcohol,
-                quality
-            });
-
-        }
-
-    });
-
-    if (rows.length < 2) {
-        throw new Error(
-            "Не удалось получить достаточное количество корректных наблюдений."
-        );
-    }
-
-    return {
-        rows,
-        invalidCount: observations.length - rows.length,
-        delimiter
-    };
+    return window.StatLabData.parseWineQualityCSV(source);
 }
-
 
 // ==========================================
 // GENERATOR — kNN MODEL
 // ==========================================
 
-function calculateKnnQualityDistribution(
-    trainingRows,
-    targetAlcohol,
-    requestedK
-) {
-
-    if (!Array.isArray(trainingRows) || trainingRows.length === 0) {
-        throw new Error("Обучающая выборка пуста.");
-    }
-
-    if (!Number.isFinite(targetAlcohol)) {
-        throw new Error("Некорректное значение alcohol.");
-    }
-
-    const k = Math.max(
-        1,
-        Math.min(
-            trainingRows.length,
-            Math.floor(requestedK)
-        )
+function calculateKnnQualityDistribution(trainingRows, targetAlcohol, requestedK) {
+    return window.StatLabGeneratorModel.calculateKnnQualityDistribution(
+        trainingRows, targetAlcohol, requestedK
     );
-
-    // Расстояние в одномерном пространстве признака alcohol.
-    const nearest = trainingRows
-        .map((row, index) => ({
-            ...row,
-            distance: Math.abs(row.alcohol - targetAlcohol),
-            originalIndex: index
-        }))
-        .sort((a, b) =>
-            a.distance - b.distance ||
-            a.originalIndex - b.originalIndex
-        )
-        .slice(0, k);
-
-    // Все классы качества, присутствующие в обучающей выборке.
-    const qualities = [
-        ...new Set(trainingRows.map(row => row.quality))
-    ].sort((a, b) => a - b);
-
-    const counts = new Map(
-        qualities.map(quality => [quality, 0])
-    );
-
-    nearest.forEach(row => {
-        counts.set(
-            row.quality,
-            (counts.get(row.quality) || 0) + 1
-        );
-    });
-
-    // Условные вероятности оценок среди k соседей.
-    const probabilities = qualities.map(
-        quality => counts.get(quality) / nearest.length
-    );
-
-    // Математическое ожидание условного распределения.
-    const mean = qualities.reduce(
-        (sum, quality, index) =>
-            sum + quality * probabilities[index],
-        0
-    );
-
-    // Дисперсия условного распределения.
-    const variance = qualities.reduce(
-        (sum, quality, index) =>
-            sum + probabilities[index] * (quality - mean) ** 2,
-        0
-    );
-
-    return {
-        alcohol: targetAlcohol,
-        unit: "% об.",
-        k: nearest.length,
-        qualities,
-        probabilities,
-        mean,
-        variance
-    };
 }
 
-// ==========================================
-// GENERATOR — FAST NEAREST NEIGHBORS
-// ==========================================
-
-function getNearestKnnRows(sortedRows, targetAlcohol, k) {
-
-    // Ищем первое наблюдение, у которого alcohol >= targetAlcohol.
-    let low = 0;
-    let high = sortedRows.length;
-
-    while (low < high) {
-
-        const middle = Math.floor((low + high) / 2);
-
-        if (sortedRows[middle].alcohol < targetAlcohol) {
-            low = middle + 1;
-        } else {
-            high = middle;
-        }
-    }
-
-    let left = low - 1;
-    let right = low;
-
-    const nearest = [];
-
-    while (nearest.length < k) {
-
-        if (left < 0) {
-
-            nearest.push(sortedRows[right]);
-            right++;
-
-            continue;
-        }
-
-        if (right >= sortedRows.length) {
-
-            nearest.push(sortedRows[left]);
-            left--;
-
-            continue;
-        }
-
-        const leftDistance = Math.abs(
-            sortedRows[left].alcohol - targetAlcohol
-        );
-
-        const rightDistance = Math.abs(
-            sortedRows[right].alcohol - targetAlcohol
-        );
-
-        // При одинаковом расстоянии выбираем меньший alcohol.
-        if (leftDistance <= rightDistance) {
-
-            nearest.push(sortedRows[left]);
-            left--;
-
-        } else {
-
-            nearest.push(sortedRows[right]);
-            right++;
-        }
-    }
-
-    return nearest;
-}
-
-
-// ==========================================
-// GENERATOR — TEST EVALUATION
-// ==========================================
-
-function evaluateGeneratorOnTest(
-    trainingRows,
-    testRows,
-    requestedK,
-    group = "all"
-) {
-
-    // Выбираем нужную группу.
-    const train = group === "all"
-        ? trainingRows
-        : trainingRows.filter(row => row.wineType === group);
-
-    const test = group === "all"
-        ? testRows
-        : testRows.filter(row => row.wineType === group);
-
-    if (train.length === 0 || test.length === 0) {
-        throw new Error("Недостаточно наблюдений для проверки модели.");
-    }
-
-    const k = Math.min(
-        Math.max(1, Math.floor(requestedK)),
-        train.length
+function evaluateGeneratorOnTest(trainingRows, testRows, requestedK, group = "all") {
+    return window.StatLabGeneratorModel.evaluateGeneratorOnTest(
+        trainingRows, testRows, requestedK, group
     );
-
-    // Сортируем обучение один раз.
-    const sortedTrain = [...train].sort(
-        (a, b) => a.alcohol - b.alcohol
-    );
-
-    // Классы качества, которые присутствуют в выбранной группе.
-    const qualities = [
-        ...new Set([
-            ...train.map(row => row.quality),
-            ...test.map(row => row.quality)
-        ])
-    ].sort((a, b) => a - b);
-
-    const actualCounts = new Map(
-        qualities.map(q => [q, 0])
-    );
-
-    const predictedProbabilitySums = new Map(
-        qualities.map(q => [q, 0])
-    );
-
-    let brierSum = 0;
-    let zeroProbabilityCount = 0;
-
-    // Проходим по каждому независимому тестовому наблюдению.
-    test.forEach(testRow => {
-
-        const neighbors = getNearestKnnRows(
-            sortedTrain,
-            testRow.alcohol,
-            k
-        );
-
-        const neighborCounts = new Map(
-            qualities.map(q => [q, 0])
-        );
-
-        neighbors.forEach(row => {
-
-            neighborCounts.set(
-                row.quality,
-                neighborCounts.get(row.quality) + 1
-            );
-
-        });
-
-        // Вероятности классов для данного тестового объекта.
-        const probabilities = new Map();
-
-        qualities.forEach(q => {
-
-            const probability =
-                neighborCounts.get(q) / neighbors.length;
-
-            probabilities.set(q, probability);
-
-            predictedProbabilitySums.set(
-                q,
-                predictedProbabilitySums.get(q) + probability
-            );
-
-        });
-
-        // Наблюдаемое качество.
-        actualCounts.set(
-            testRow.quality,
-            (actualCounts.get(testRow.quality) || 0) + 1
-        );
-
-        // Мультиномиальная ошибка Brier.
-        // Чем ближе к нулю, тем лучше вероятностный прогноз.
-        let observationBrier = 0;
-
-        qualities.forEach(q => {
-
-            const predicted = probabilities.get(q);
-
-            const observed = testRow.quality === q ? 1 : 0;
-
-            observationBrier += (predicted - observed) ** 2;
-
-        });
-
-        brierSum += observationBrier;
-
-        // Проверяем, была ли реальная оценка представлена
-        // среди ближайших соседей.
-        if ((probabilities.get(testRow.quality) || 0) === 0) {
-            zeroProbabilityCount++;
-        }
-
-    });
-
-    const n = test.length;
-
-    // Наблюдаемое и предсказанное маргинальные распределения.
-    const actualDistribution = qualities.map(q => ({
-        quality: q,
-        probability: actualCounts.get(q) / n
-    }));
-
-    const predictedDistribution = qualities.map(q => ({
-        quality: q,
-        probability: predictedProbabilitySums.get(q) / n
-    }));
-
-    // Total Variation Distance.
-    // Значение 0 означает полное совпадение распределений.
-    const tv = 0.5 * qualities.reduce((sum, q) => {
-
-        const actual =
-            actualCounts.get(q) / n;
-
-        const predicted =
-            predictedProbabilitySums.get(q) / n;
-
-        return sum + Math.abs(actual - predicted);
-
-    }, 0);
-
-    // Математическое ожидание реального тестового распределения.
-    const actualMean = actualDistribution.reduce(
-        (sum, item) =>
-            sum + item.quality * item.probability,
-        0
-    );
-
-    // Математическое ожидание модельного распределения.
-    const predictedMean = predictedDistribution.reduce(
-        (sum, item) =>
-            sum + item.quality * item.probability,
-        0
-    );
-
-    // Дисперсия реального распределения.
-    const actualVariance = actualDistribution.reduce(
-        (sum, item) =>
-            sum +
-            (item.quality - actualMean) ** 2 *
-            item.probability,
-        0
-    );
-
-    // Дисперсия модельного распределения.
-    const predictedVariance = predictedDistribution.reduce(
-        (sum, item) =>
-            sum +
-            (item.quality - predictedMean) ** 2 *
-            item.probability,
-        0
-    );
-
-    return {
-
-        group,
-        n,
-        k,
-
-        qualities,
-
-        actualDistribution,
-        predictedDistribution,
-
-        tv,
-
-        actualMean,
-        predictedMean,
-
-        actualVariance,
-        predictedVariance,
-
-        meanDifference: predictedMean - actualMean,
-
-        varianceDifference:
-            predictedVariance - actualVariance,
-
-        brierScore: brierSum / n,
-
-        zeroProbabilityRate:
-            zeroProbabilityCount / n
-
-    };
 }
 
 // ==========================================
@@ -8097,18 +7198,20 @@ function updateGeneratorKnnModel() {
 // ==========================================
 
 async function fetchGeneratorCSV(path) {
-
-    const response = await fetch(path);
-
-    if (!response.ok) {
-        throw new Error(
-            `Не удалось загрузить ${path}. HTTP ${response.status}`
-        );
+    // Works from file://, root hosting, nested hosting and when static CSV fetch fails.
+    const embedded = typeof window.getStatLabEmbeddedCSV === "function"
+        ? window.getStatLabEmbeddedCSV(path) : null;
+    if (window.location.protocol === "file:" && embedded !== null) {
+        return parseGeneratorCSV(embedded);
     }
-
-    const source = await response.text();
-
-    return parseGeneratorCSV(source);
+    try {
+        const response = await fetch(new URL(path, document.baseURI).href, { cache: "no-store" });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return parseGeneratorCSV(await response.text());
+    } catch (error) {
+        if (embedded !== null) return parseGeneratorCSV(embedded);
+        throw new Error(`Не удалось загрузить ${path}: ${error.message}`);
+    }
 }
 
 
@@ -8116,40 +7219,16 @@ async function fetchGeneratorCSV(path) {
 // GENERATOR — TRAIN / TEST SPLIT
 // ==========================================
 
-function splitGeneratorRows(
-    rows,
-    testFraction = 0.2,
-    seed = 20261112
-) {
-
-    const random = createSeededRandom(seed);
-
-    const shuffled = [...rows];
-
-    // Перемешивание Фишера — Йейтса.
-    for (let i = shuffled.length - 1; i > 0; i--) {
-
-        const j = Math.floor(random() * (i + 1));
-
-        [shuffled[i], shuffled[j]] =
-            [shuffled[j], shuffled[i]];
-    }
-
-    // Выделяем 20% для проверки.
-    const testSize = Math.ceil(
-        shuffled.length * testFraction
+function splitGeneratorRows(rows, testFraction = 0.2, seed = 20261112) {
+    return window.StatLabGeneratorModel.splitGeneratorRows(
+        rows, testFraction, seed
     );
-
-    return {
-        test: shuffled.slice(0, testSize),
-        train: shuffled.slice(testSize)
-    };
 }
-
 
 // ==========================================
 // GENERATOR — LOAD AND CACHE DATASET
 // ==========================================
+
 
 async function getGeneratorDataset() {
 
@@ -8157,7 +7236,6 @@ async function getGeneratorDataset() {
         return generatorDatasetCache;
     }
 
-    // Не запускаем параллельно несколько одинаковых загрузок.
     if (generatorDatasetPromise) {
         return generatorDatasetPromise;
     }
@@ -8165,18 +7243,10 @@ async function getGeneratorDataset() {
     generatorDatasetPromise = (async () => {
 
         const [redData, whiteData] = await Promise.all([
-
-            fetchGeneratorCSV(
-                "./data/winequality-red.csv"
-            ),
-
-            fetchGeneratorCSV(
-                "./data/winequality-white.csv"
-            )
-
+            fetchGeneratorCSV("./data/winequality-red.csv"),
+            fetchGeneratorCSV("./data/winequality-white.csv")
         ]);
 
-        // Помечаем тип вина, чтобы сохранить происхождение записей.
         const redRows = redData.rows.map(row => ({
             ...row,
             wineType: "red"
@@ -8187,8 +7257,13 @@ async function getGeneratorDataset() {
             wineType: "white"
         }));
 
-        // Делим красное и белое вино отдельно.
-        // Так пропорции групп сохраняются и в train, и в test.
+        // Полная совокупность для статистического анализа.
+        const allRows = [
+            ...redRows,
+            ...whiteRows
+        ];
+
+        // Отдельные обучающие и тестовые выборки генератора.
         const redSplit = splitGeneratorRows(
             redRows,
             0.2,
@@ -8202,6 +7277,7 @@ async function getGeneratorDataset() {
         );
 
         const dataset = {
+            allRows,
 
             train: [
                 ...redSplit.train,
@@ -8219,7 +7295,6 @@ async function getGeneratorDataset() {
             invalidCount:
                 redData.invalidCount +
                 whiteData.invalidCount
-
         };
 
         generatorDatasetCache = dataset;
@@ -8228,14 +7303,14 @@ async function getGeneratorDataset() {
 
     })().catch(error => {
 
-        // При ошибке разрешаем повторить загрузку.
         generatorDatasetPromise = null;
-
         throw error;
+
     });
 
     return generatorDatasetPromise;
 }
+
 
 
 // ==========================================
@@ -8400,22 +7475,356 @@ async function loadGeneratorTrainingData() {
 // ==========================================
 // HYPOTHESIS TESTING EXPERIMENT
 // ==========================================
+    // ==========================================
+// HYPOTHESIS TESTING — MATHEMATICAL FUNCTIONS
+// ==========================================
 
-function updateHypothesisExperiment() {
+// Логарифм гамма-функции.
+// Используется для вычисления бета-функции.
 
-    const select = document.getElementById("hypothesisSelect");
-    const result = document.getElementById("hypothesisResult");
+function logGamma(value) {
+    return window.StatLabInference.logGamma(value);
+}
+
+function regularizedBeta(value, firstShape, secondShape) {
+    return window.StatLabInference.regularizedBeta(
+        value, firstShape, secondShape
+    );
+}
+
+function studentTCDF(value, degreesOfFreedom) {
+    return window.StatLabInference.studentTCDF(value, degreesOfFreedom);
+}
+
+function studentTTwoSidedP(value, degreesOfFreedom) {
+    return window.StatLabInference.studentTTwoSidedP(
+        value, degreesOfFreedom
+    );
+}
+
+function studentTQuantile(probability, degreesOfFreedom) {
+    return window.StatLabInference.studentTQuantile(
+        probability, degreesOfFreedom
+    );
+}
+
+function normalCDF(value) {
+    return window.StatLabInference.normalCDF(value);
+}
+
+// ==========================================
+// DESCRIPTIVE STATISTICS
+// ==========================================
+
+function hypothesisMean(values) {
+    return window.StatLabStatistics.mean(values);
+}
+
+
+function hypothesisVariance(values) {
+    return window.StatLabStatistics.sampleVariance(values);
+}
+
+
+function hypothesisMedian(values) {
+    return window.StatLabStatistics.median(values);
+}
+
+
+function formatHypothesisNumber(value, digits = 4) {
+
+    if (!Number.isFinite(value)) return "—";
+
+    return value.toLocaleString("ru-RU", {
+        minimumFractionDigits: digits,
+        maximumFractionDigits: digits
+    });
+}
+
+
+
+function formatHypothesisPValue(value) {
+
+    if (!Number.isFinite(value)) return "—";
+
+    if (value === 0) {
+        return "< 4.94 × 10⁻³²⁴ (численное обнуление)";
+    }
+
+    if (value < 0.000001) {
+        return value.toExponential(3);
+    }
+
+    return value.toFixed(6);
+}
+
+
+function holmAdjustPValues(pValues) {
+
+    const m = pValues.length;
+
+    const sorted = pValues
+        .map((value, index) => ({
+            value: Math.min(1, Math.max(0, value)),
+            index
+        }))
+        .sort((a, b) => a.value - b.value);
+
+    const adjusted = new Array(m);
+
+    let previous = 0;
+
+    sorted.forEach((item, rank) => {
+
+        const corrected = Math.min(
+            1,
+            (m - rank) * item.value
+        );
+
+        previous = Math.max(previous, corrected);
+
+        adjusted[item.index] = previous;
+    });
+
+    return adjusted;
+}
+
+
+
+// ==========================================
+// WELCH'S T-TEST
+// ==========================================
+
+function calculateWelchTest(first, second) {
+
+    const n1 = first.length;
+    const n2 = second.length;
+
+    const mean1 = hypothesisMean(first);
+    const mean2 = hypothesisMean(second);
+
+    const variance1 = hypothesisVariance(first);
+    const variance2 = hypothesisVariance(second);
+
+    const difference = mean1 - mean2;
+
+    const standardError = Math.sqrt(
+        variance1 / n1 +
+        variance2 / n2
+    );
+
+    const t = difference / standardError;
+
+    const numerator = (
+        variance1 / n1 +
+        variance2 / n2
+    ) ** 2;
+
+    const denominator =
+        (variance1 / n1) ** 2 / (n1 - 1) +
+        (variance2 / n2) ** 2 / (n2 - 1);
+
+    const df = numerator / denominator;
+
+    const pValue = studentTTwoSidedP(t, df);
+
+    const criticalValue = studentTQuantile(
+        0.975,
+        df
+    );
+
+    const ciLow =
+        difference - criticalValue * standardError;
+
+    const ciHigh =
+        difference + criticalValue * standardError;
+
+    const pooledVariance = (
+        (n1 - 1) * variance1 +
+        (n2 - 1) * variance2
+    ) / (n1 + n2 - 2);
+
+    const cohensD =
+        difference / Math.sqrt(pooledVariance);
+
+    return {
+        n1,
+        n2,
+        mean1,
+        mean2,
+        difference,
+        variance1,
+        variance2,
+        standardError,
+        t,
+        df,
+        pValue,
+        ciLow,
+        ciHigh,
+        cohensD
+    };
+}
+
+
+// ==========================================
+// PEARSON CORRELATION TEST
+// ==========================================
+
+function calculatePearsonHypothesis(points) {
+
+    const n = points.length;
+
+    const r = calculatePearson(points);
+
+    const t = r * Math.sqrt(
+        (n - 2) / (1 - r * r)
+    );
+
+    const pValue = studentTTwoSidedP(
+        t,
+        n - 2
+    );
+
+    return {
+        n,
+        r,
+        t,
+        df: n - 2,
+        pValue
+    };
+}
+
+// Асимптотическая проверка значимости ранговой корреляции Спирмена.
+function calculateSpearmanHypothesis(points) {
+    const n = points.length;
+    const rho = calculateSpearman(points);
+    if (n < 3 || Math.abs(rho) >= 1) {
+        return { n, rho, t: Math.abs(rho) === 1 ? Infinity : NaN,
+            df: n - 2, pValue: Math.abs(rho) === 1 ? 0 : NaN };
+    }
+    const t = rho * Math.sqrt((n - 2) / (1 - rho * rho));
+    return { n, rho, t, df: n - 2, pValue: studentTTwoSidedP(t, n - 2) };
+}
+
+
+// ==========================================
+// MANN-WHITNEY U TEST
+// ==========================================
+
+function calculateMannWhitney(first, second) {
+
+    const combined = [
+        ...first.map(value => ({
+            value,
+            group: 1
+        })),
+
+        ...second.map(value => ({
+            value,
+            group: 2
+        }))
+    ].sort((a, b) => a.value - b.value);
+
+    let rankSumFirst = 0;
+    let tieCorrection = 0;
+
+    let i = 0;
+
+    while (i < combined.length) {
+
+        let j = i + 1;
+
+        while (
+            j < combined.length &&
+            combined[j].value === combined[i].value
+        ) {
+            j++;
+        }
+
+        const tieSize = j - i;
+
+        const averageRank = (
+            (i + 1) + j
+        ) / 2;
+
+        for (let k = i; k < j; k++) {
+
+            if (combined[k].group === 1) {
+                rankSumFirst += averageRank;
+            }
+
+        }
+
+        if (tieSize > 1) {
+            tieCorrection +=
+                tieSize ** 3 - tieSize;
+        }
+
+        i = j;
+    }
+
+    const n1 = first.length;
+    const n2 = second.length;
+    const total = n1 + n2;
+
+    const u1 =
+        rankSumFirst - n1 * (n1 + 1) / 2;
+
+    const u2 = n1 * n2 - u1;
+
+    const u = u1;
+
+    const meanU = n1 * n2 / 2;
+
+    const varianceU =
+        n1 * n2 / 12 * (
+            total + 1 -
+            tieCorrection / (total * (total - 1))
+        );
+
+    const standardDeviation = Math.sqrt(varianceU);
+
+    const z = Math.max(0, (Math.abs(u1 - meanU) - 0.5) / standardDeviation);
+    const logPValue = normalTwoSidedLogP(z);
+    const pValue = Math.exp(logPValue);
+
+    return {
+        n1,
+        n2,
+        u,
+        u1,
+        u2,
+        z,
+        pValue,
+        logPValue,
+        log10PValue: logPValue / Math.LN10,
+        median1: hypothesisMedian(first),
+        median2: hypothesisMedian(second)
+    };
+}
+
+// ==========================================
+// HYPOTHESIS TESTING — LIVE EXPERIMENT
+// ==========================================
+
+async function updateHypothesisExperiment() {
+
+    const select = document.getElementById(
+        "hypothesisSelect"
+    );
+
+    const result = document.getElementById(
+        "hypothesisResult"
+    );
 
     if (!select || !result || !currentLab) return;
 
-    // Берём гипотезу непосредственно из текущей лабораторной.
     const hypothesis = currentLab.hypotheses.find(
         item => item.id === select.value
     );
 
     if (!hypothesis) return;
 
-    // Определяем выбранный пользователем уровень значимости.
     const activeAlpha = document.querySelector(
         ".hypothesis-alpha-button.is-selected"
     );
@@ -8424,169 +7833,535 @@ function updateHypothesisExperiment() {
         ? Number(activeAlpha.dataset.alpha)
         : 0.05;
 
-    let decisionTitle;
-    let decisionDescription;
-    let decisionClass;
+    result.innerHTML = emptyState(
+        "Загружаем исходные наблюдения и рассчитываем критерии..."
+    );
 
-    // ======================================
-    // CASE 1. EXACT P-VALUE
-    // ======================================
+    try {
 
-    if (typeof hypothesis.pValue === "number") {
+        // Получаем исходные наблюдения из CSV.
+        const dataset = await getGeneratorDataset();
 
-        if (hypothesis.pValue <= alpha) {
-
-            decisionTitle = "Отклоняем H₀";
-
-            decisionDescription =
-                "p-value не превышает выбранный уровень значимости. Есть статистические основания отвергнуть нулевую гипотезу.";
-
-            decisionClass = "decision-reject";
-
-        } else {
-
-            decisionTitle = "Нет оснований отклонить H₀";
-
-            decisionDescription =
-                "p-value превышает уровень значимости. Оснований отвергнуть нулевую гипотезу недостаточно.";
-
-            decisionClass = "decision-neutral";
-        }
-
-    }
-
-    // ======================================
-    // CASE 2. ONLY UPPER BOUND IS KNOWN
-    // ======================================
-
-    else if (
-        typeof hypothesis.pValueUpperBound === "number" &&
-        alpha >= hypothesis.pValueUpperBound
-    ) {
-
-        decisionTitle = "Отклоняем H₀";
-
-        decisionDescription =
-            `Известно, что p-value меньше ${hypothesis.pValueUpperBound}. Этого достаточно для отклонения H₀ при α = ${alpha}.`;
-
-        decisionClass = "decision-reject";
-
-    }
-
-    // ======================================
-    // CASE 3. INSUFFICIENT INFORMATION
-    // ======================================
-
-    else {
-
-        decisionTitle = "Недостаточно численных данных";
-
-        decisionDescription =
-            `Сохранённые результаты не позволяют определить решение при α = ${alpha}. Необходимо получить точное p-value.`;
-
-        decisionClass = "decision-unknown";
-    }
-
-    // ======================================
-    // METRICS
-    // ======================================
-
-    const metricsHTML = (hypothesis.metrics || []).map(metric => `
-        <div class="result-metric">
-
-            <small>${escapeHTML(metric.label)}</small>
-
-            <strong>${escapeHTML(metric.value)}</strong>
-
-        </div>
-    `).join("");
-
-    const pValueDisplay = hypothesis.pValueText ||
-        (
-            typeof hypothesis.pValue === "number"
-                ? hypothesis.pValue.toExponential(3)
-                : "Не указано"
+        const redRows = dataset.allRows.filter(
+            row => row.wineType === "red"
         );
 
-    // ======================================
-    // RESULT RENDERING
-    // ======================================
+        const whiteRows = dataset.allRows.filter(
+            row => row.wineType === "white"
+        );
 
-    result.innerHTML = `
+        let method = hypothesis.method;
+        let metrics = [];
+        let pValues = [];
+        let pValueLabels = [];
+        let pValueTextValues = [];
+        let conclusion = "";
 
-        <div class="hypothesis-statements">
+        // ======================================
+        // HYPOTHESIS 1
+        // QUALITY: RED VS WHITE
+        // ======================================
 
-            <div>
+        if (hypothesis.id === "quality-color") {
 
-                <span class="tag">H₀ / NULL HYPOTHESIS</span>
+            const redQuality = redRows.map(
+                row => row.quality
+            );
 
-                <p>${escapeHTML(hypothesis.h0)}</p>
+            const whiteQuality = whiteRows.map(
+                row => row.quality
+            );
+
+            const test = calculateWelchTest(
+                redQuality,
+                whiteQuality
+            );
+
+            method = "Двусторонний t-критерий Уэлча";
+
+            pValues = [test.pValue];
+            pValueLabels = ["t-критерий Уэлча"];
+
+            metrics = [
+
+                {
+                    label: "Среднее качество · красное",
+                    value: formatHypothesisNumber(test.mean1)
+                },
+
+                {
+                    label: "Среднее качество · белое",
+                    value: formatHypothesisNumber(test.mean2)
+                },
+
+                {
+                    label: "Разность средних",
+                    value: formatHypothesisNumber(test.difference)
+                },
+
+                {
+                    label: "Статистика t",
+                    value: formatHypothesisNumber(test.t)
+                },
+
+                {
+                    label: "Степени свободы",
+                    value: formatHypothesisNumber(test.df, 2)
+                },
+
+                {
+                    label: "Стандартная ошибка",
+                    value: formatHypothesisNumber(test.standardError)
+                },
+
+                {
+                    label: "95% доверительный интервал",
+                    value:
+                        `[${formatHypothesisNumber(test.ciLow)}; ` +
+                        `${formatHypothesisNumber(test.ciHigh)}]`
+                },
+
+                {
+                    label: "Cohen's d",
+                    value: formatHypothesisNumber(test.cohensD)
+                },
+
+                {
+                    label: "Объём выборки · красное",
+                    value: test.n1.toLocaleString("ru-RU")
+                },
+
+                {
+                    label: "Объём выборки · белое",
+                    value: test.n2.toLocaleString("ru-RU")
+                }
+
+            ];
+
+            conclusion =
+                test.difference < 0
+                    ? "Среднее качество красного вина ниже среднего качества белого вина."
+                    : "Среднее качество красного вина выше среднего качества белого вина.";
+
+            conclusion +=
+                " Размер эффекта оценивается по Cohen's d. " +
+                "Статистическая значимость сама по себе не означает, " +
+                "что различие велико с практической точки зрения.";
+        }
+
+        // ======================================
+        // HYPOTHESIS 2
+        // ALCOHOL AND QUALITY
+        // ======================================
+
+        
+else if (hypothesis.id === "alcohol-quality") {
+
+    const redPoints = redRows.map(row => ({
+        x: row.alcohol,
+        y: row.quality
+    }));
+
+    const whitePoints = whiteRows.map(row => ({
+        x: row.alcohol,
+        y: row.quality
+    }));
+
+    const redPearson = calculatePearsonHypothesis(redPoints);
+    const whitePearson = calculatePearsonHypothesis(whitePoints);
+
+    const redSpearman = calculateSpearmanHypothesis(redPoints);
+    const whiteSpearman = calculateSpearmanHypothesis(whitePoints);
+
+    method =
+        "Двусторонние тесты корреляции Пирсона и Спирмена " +
+        "(для Спирмена используется t-аппроксимация; " +
+        "множественные сравнения корректируются методом Холма)";
+
+    pValues = [
+        redPearson.pValue,
+        whitePearson.pValue,
+        redSpearman.pValue,
+        whiteSpearman.pValue
+    ];
+
+    pValueLabels = [
+        "Пирсон · красное",
+        "Пирсон · белое",
+        "Спирмен · красное",
+        "Спирмен · белое"
+    ];
+
+    const adjustedPValues = holmAdjustPValues(pValues);
+
+    metrics = [
+
+        {
+            label: "Pearson r · красное",
+            value: formatHypothesisNumber(redPearson.r)
+        },
+        {
+            label: "p-value Pearson · красное",
+            value: formatHypothesisPValue(redPearson.pValue)
+        },
+        {
+            label: "Holm p-value · красное",
+            value: formatHypothesisPValue(adjustedPValues[0])
+        },
+
+        {
+            label: "Pearson r · белое",
+            value: formatHypothesisNumber(whitePearson.r)
+        },
+        {
+            label: "p-value Pearson · белое",
+            value: formatHypothesisPValue(whitePearson.pValue)
+        },
+        {
+            label: "Holm p-value · белое",
+            value: formatHypothesisPValue(adjustedPValues[1])
+        },
+
+        {
+            label: "Spearman ρ · красное",
+            value: formatHypothesisNumber(redSpearman.rho)
+        },
+        {
+            label: "p-value Spearman · красное",
+            value: formatHypothesisPValue(redSpearman.pValue)
+        },
+        {
+            label: "Holm p-value · красное",
+            value: formatHypothesisPValue(adjustedPValues[2])
+        },
+
+        {
+            label: "Spearman ρ · белое",
+            value: formatHypothesisNumber(whiteSpearman.rho)
+        },
+        {
+            label: "p-value Spearman · белое",
+            value: formatHypothesisPValue(whiteSpearman.pValue)
+        },
+        {
+            label: "Holm p-value · белое",
+            value: formatHypothesisPValue(adjustedPValues[3])
+        },
+
+        {
+            label: "Наблюдений · красное",
+            value: redPearson.n.toLocaleString("ru-RU")
+        },
+        {
+            label: "Наблюдений · белое",
+            value: whitePearson.n.toLocaleString("ru-RU")
+        }
+
+    ];
+
+    conclusion =
+        "В обеих группах наблюдается положительная связь " +
+        "между содержанием алкоголя и оценкой качества. " +
+        "Результаты Пирсона и Спирмена согласуются. " +
+        "Для контроля семейной вероятности ошибки первого рода " +
+        "применена поправка Холма к четырём p-value. " +
+        "Корреляция не доказывает причинность.";
+}
+
+
+        // ======================================
+        // HYPOTHESIS 3
+        // VOLATILE ACIDITY
+        // ======================================
+
+        else if (hypothesis.id === "acidity-color") {
+
+            const redAcidity = redRows.map(
+                row => row.volatileAcidity
+            );
+
+            const whiteAcidity = whiteRows.map(
+                row => row.volatileAcidity
+            );
+
+            const test = calculateMannWhitney(
+                redAcidity,
+                whiteAcidity
+            );
+
+            method =
+                "Двусторонний критерий Манна — Уитни " +
+                "(нормальная аппроксимация с поправкой на связи)";
+
+            pValues = [test.pValue];
+            pValueLabels = ["Критерий Манна — Уитни"];
+            pValueTextValues = [`10^${formatHypothesisNumber(test.log10PValue, 2)}`];
+
+            metrics = [
+
+                {
+                    label: "Статистика U",
+                    value: formatHypothesisNumber(test.u, 1)
+                },
+
+                {
+                    label: "Статистика z",
+                    value: formatHypothesisNumber(test.z)
+                },
+
+                {
+                    label: "log₁₀(p-value)",
+                    value: formatHypothesisNumber(test.log10PValue, 2)
+                },
+
+                {
+                    label: "Медиана · красное",
+                    value: formatHypothesisNumber(test.median1)
+                },
+
+                {
+                    label: "Медиана · белое",
+                    value: formatHypothesisNumber(test.median2)
+                },
+
+                {
+                    label: "Объём выборки · красное",
+                    value: test.n1.toLocaleString("ru-RU")
+                },
+
+                {
+                    label: "Объём выборки · белое",
+                    value: test.n2.toLocaleString("ru-RU")
+                }
+
+            ];
+
+            conclusion =
+                "Распределения летучей кислотности в группах " +
+                "красного и белого вина статистически различаются. " +
+                "Медианы показывают направление различия, " +
+                "но критерий Манна — Уитни в общем случае проверяет " +
+                "различие распределений, а не только медиан.";
+        }
+
+        else {
+
+            result.innerHTML = emptyState(
+                "Для выбранной гипотезы расчёт пока не реализован."
+            );
+
+            return;
+        }
+
+        // ======================================
+        // DECISION
+        // ======================================
+
+        
+const decisionPValues =
+hypothesis.id === "alcohol-quality"
+    ? holmAdjustPValues(pValues)
+    : pValues;
+
+const allSignificant = decisionPValues.every(
+pValue => pValue <= alpha
+);
+
+const anySignificant = decisionPValues.some(
+pValue => pValue <= alpha
+);
+
+let decisionTitle;
+let decisionDescription;
+let decisionClass;
+
+if (allSignificant) {
+
+decisionTitle = "Отклоняем H₀";
+
+decisionDescription =
+    "Все проверки статистически значимы после применения " +
+    "поправки на множественные сравнения. " +
+    "Получены основания отвергнуть нулевую гипотезу.";
+
+decisionClass = "decision-reject";
+
+} else if (anySignificant) {
+
+decisionTitle = "Часть проверок значима";
+
+decisionDescription =
+    "После поправки на множественные сравнения " +
+    "часть проверок остаётся статистически значимой. " +
+    "Есть основания отвергнуть общую нулевую гипотезу.";
+
+decisionClass = "decision-reject";
+
+} else {
+
+decisionTitle = "Нет оснований отклонить H₀";
+
+decisionDescription =
+    "После учёта множественных сравнений " +
+    "статистически значимых результатов не обнаружено. " +
+    "Это не доказывает истинность нулевой гипотезы.";
+
+decisionClass = "decision-neutral";
+}
+
+
+        // ======================================
+        // METRICS
+        // ======================================
+
+        const metricsHTML = metrics.map(metric => `
+
+            <div class="result-metric">
+
+                <small>
+                    ${escapeHTML(metric.label)}
+                </small>
+
+                <strong>
+                    ${escapeHTML(metric.value)}
+                </strong>
 
             </div>
 
-            <div>
+        `).join("");
 
-                <span class="tag">H₁ / ALTERNATIVE HYPOTHESIS</span>
+        const pValueHTML = pValues.map(
+            (pValue, index) => `
 
-                <p>${escapeHTML(hypothesis.h1)}</p>
+                <div class="hypothesis-pvalue">
+
+                    <small>
+                        ${escapeHTML(pValueLabels[index] || `Проверка ${index + 1}`)}
+                    </small>
+
+                    <strong>
+                        ${pValueTextValues[index] || (pValue === 0
+                            ? "Меньше машинной точности"
+                            : formatHypothesisPValue(pValue))}
+                    </strong>
+
+                </div>
+
+            `
+        ).join("");
+
+        // ======================================
+        // RENDER
+        // ======================================
+
+        result.innerHTML = `
+
+            <div class="hypothesis-statements">
+
+                <div>
+
+                    <span class="tag">
+                        H₀ / NULL HYPOTHESIS
+                    </span>
+
+                    <p>
+                        ${escapeHTML(hypothesis.h0)}
+                    </p>
+
+                </div>
+
+                <div>
+
+                    <span class="tag">
+                        H₁ / ALTERNATIVE HYPOTHESIS
+                    </span>
+
+                    <p>
+                        ${escapeHTML(hypothesis.h1)}
+                    </p>
+
+                </div>
 
             </div>
 
-        </div>
 
-
-        <div class="hypothesis-test-info">
-
-            <span class="tag">STATISTICAL TEST</span>
-
-            <strong>${escapeHTML(hypothesis.method)}</strong>
-
-        </div>
-
-
-        <div class="hypothesis-result-metrics">
-
-            ${metricsHTML || emptyState("Численные показатели отсутствуют.")}
-
-        </div>
-
-
-        <div class="hypothesis-decision ${decisionClass}">
-
-            <div>
+            <div class="hypothesis-test-info">
 
                 <span class="tag">
-                    DECISION · α = ${alpha.toFixed(2)}
+                    STATISTICAL TEST
                 </span>
 
-                <h3>${decisionTitle}</h3>
-
-                <p>${decisionDescription}</p>
-
-            </div>
-
-            <div class="hypothesis-pvalue">
-
-                <small>p-value</small>
-
-                <strong>${escapeHTML(pValueDisplay)}</strong>
+                <strong>
+                    ${escapeHTML(method)}
+                </strong>
 
             </div>
 
-        </div>
+
+            <div class="hypothesis-result-metrics">
+
+                ${metricsHTML}
+
+            </div>
 
 
-        <div class="note">
+            <div class="hypothesis-decision ${decisionClass}">
 
-            <strong>Вывод исследования.</strong>
+                <div>
 
-            ${escapeHTML(
-                hypothesis.conclusion || hypothesis.detail || ""
-            )}
+                    <span class="tag">
+                        DECISION · α = ${alpha.toFixed(2)}
+                    </span>
 
-        </div>
+                    <h3>
+                        ${decisionTitle}
+                    </h3>
 
-    `;
+                    <p>
+                        ${decisionDescription}
+                    </p>
+
+                </div>
+
+                <div class="hypothesis-pvalues">
+
+                    ${pValueHTML}
+
+                </div>
+
+            </div>
+
+
+            <div class="note">
+
+                <strong>
+                    Вывод исследования.
+                </strong>
+
+                ${escapeHTML(conclusion)}
+
+            </div>
+
+
+            <p class="muted">
+                Результаты рассчитаны по ${dataset.allRows.length.toLocaleString("ru-RU")}
+                исходным наблюдениям из CSV. Уровень значимости α
+                влияет на решение, но не изменяет рассчитанные статистики.
+            </p>
+
+        `;
+
+    } catch (error) {
+
+        console.error(
+            "Ошибка проверки статистических гипотез:",
+            error
+        );
+
+        result.innerHTML = emptyState(
+            `Не удалось выполнить расчёт: ${error.message}`
+        );
+    }
 }
 // ==========================================
 // 19. SAMPLING CHART
@@ -8598,23 +8373,30 @@ function renderSamplingChart(sampling) {
 
     if (!chart) return;
 
+    
     const series = [
         {
             key: "wr",
-            color: "#945165",
-            label: "С возвращением"
+            color: "var(--series-1)",
+            label: "Эмпирическая SE · с возвращением"
         },
         {
             key: "wor",
-            color: "#c2a46c",
-            label: "Без возвращения"
+            color: "var(--series-2)",
+            label: "Эмпирическая SE · без возвращения"
+        },
+        {
+            key: "seWr",
+            color: "var(--series-3)",
+            label: "Теоретическая SE · с возвращением"
         },
         {
             key: "seWor",
-            color: "#788c7d",
-            label: "Теоретическая ошибка · без возвращения"
+            color: "var(--series-1)",
+            label: "Теоретическая SE · без возвращения"
         }
     ];
+
 
     // Проверяем структуру данных, чтобы некорректная точка
     // не превращала весь график в NaN.
@@ -8632,6 +8414,7 @@ function renderSamplingChart(sampling) {
                 n: Number(point.n),
                 wr: Number(point.wr),
                 wor: Number(point.wor),
+                seWr: Number(point.seWr),
                 seWor: Number(point.seWor)
             }))
             .sort((a, b) => a.n - b.n)
@@ -8797,280 +8580,6 @@ function renderSamplingChart(sampling) {
 // ==========================================
 // МЕТОДЫ ИССЛЕДОВАНИЯ
 // ==========================================
-
-function renderMethods(lab) {
-
-    const methods = Array.isArray(lab.methods)
-        ? lab.methods
-        : [];
-
-    const variables = Array.isArray(lab.variables)
-        ? lab.variables
-        : [];
-
-    // Проверяем, есть ли данные для нормализации.
-    const hasNormalizationData =
-        Boolean(getNormalizationDataset(lab));
-
-    return `
-
-        <section class="section" id="methods">
-
-            ${sectionHeader(
-                "06 / МЕТОДОЛОГИЯ",
-                "Методы исследования",
-                "Изучение данных, распределений и статистических характеристик."
-            )}
-
-
-            <div class="grid three-col">
-
-                ${methods.length
-
-                    ? methods.map(method => `
-
-                        <div class="card">
-
-                            <span class="tag">МЕТОД</span>
-
-                            <h3>
-                                ${escapeHTML(method.title)}
-                            </h3>
-
-                            <p class="muted">
-                                ${escapeHTML(method.description)}
-                            </p>
-
-                        </div>
-
-                    `).join("")
-
-                    : emptyState("Методы пока не добавлены.")
-
-                }
-
-            </div>
-
-
-            ${hasNormalizationData ? `
-
-                <div class="card normalization-lab">
-
-                    <div class="experiment-top">
-
-                        <div>
-
-                            <span class="tag">
-                                ЭКСПЕРИМЕНТ 004
-                            </span>
-
-                            <h3>
-                                Интерактивная нормализация
-                            </h3>
-
-                            <p class="muted">
-                                Изучение методов Min–Max и Z-score
-                                на распределении оценки качества вина.
-                            </p>
-
-                        </div>
-
-                        <span class="experiment-status">
-                            ● ИНТЕРАКТИВНО
-                        </span>
-
-                    </div>
-
-
-                    <div class="normalization-controls">
-
-                        <div class="control-field">
-
-                            <label for="normalizationMethod">
-                                Метод преобразования
-                            </label>
-
-                            <select
-                                id="normalizationMethod"
-                                class="select"
-                            >
-
-                                <option value="minmax">
-                                    Min–Max
-                                </option>
-
-                                <option value="zscore">
-                                    Z-score
-                                </option>
-
-                            </select>
-
-                        </div>
-
-
-                        <div
-                            class="control-field"
-                            id="normalizationLowerControl"
-                        >
-
-                            <label for="normalizationTargetMin">
-                                Нижняя граница
-                            </label>
-
-                            <input
-                                id="normalizationTargetMin"
-                                class="select"
-                                type="number"
-                                step="any"
-                                value="0"
-                            >
-
-                        </div>
-
-
-                        <div
-                            class="control-field"
-                            id="normalizationUpperControl"
-                        >
-
-                            <label for="normalizationTargetMax">
-                                Верхняя граница
-                            </label>
-
-                            <input
-                                id="normalizationTargetMax"
-                                class="select"
-                                type="number"
-                                step="any"
-                                value="1"
-                            >
-
-                        </div>
-
-                    </div>
-
-
-                    <div
-                        id="normalizationResult"
-                        class="normalization-result"
-                    >
-
-                        <div class="empty-state">
-                            Измени параметры эксперимента,
-                            чтобы увидеть результат.
-                        </div>
-
-                    </div>
-
-                </div>
-
-            ` : `
-
-                <div class="card normalization-lab">
-
-                    <span class="tag">НОРМАЛИЗАЦИЯ</span>
-
-                    <h3>
-                        Эксперимент пока недоступен
-                    </h3>
-
-                    <p class="muted">
-                        Для нормализации необходимы числовые значения
-                        и частоты наблюдений.
-                    </p>
-
-                </div>
-
-            `}
-
-
-            ${variables.length ? `
-
-                <div class="card eda-explorer-card">
-
-                    <div class="experiment-top">
-
-                        <div>
-
-                            <span class="tag">
-                                ЭКСПЕРИМЕНТ 005
-                            </span>
-
-                            <h3>
-                                Исследовательский анализ данных
-                            </h3>
-
-                            <p class="muted">
-                                Изучение описательных характеристик
-                                исследуемых случайных величин.
-                            </p>
-
-                        </div>
-
-                        <span class="experiment-status">
-                            ● ИНТЕРАКТИВНО
-                        </span>
-
-                    </div>
-
-
-                    <div class="eda-controls">
-
-                        <div class="control-field">
-
-                            <label for="edaVariableSelect">
-                                Исследуемая величина
-                            </label>
-
-                            <select
-                                id="edaVariableSelect"
-                                class="select"
-                            >
-
-                                ${variables.map(variable => `
-
-                                    <option value="${escapeHTML(variable.id)}">
-                                        ${escapeHTML(variable.name)}
-                                    </option>
-
-                                `).join("")}
-
-                            </select>
-
-                        </div>
-
-                    </div>
-
-
-                    <div id="edaExplorerResult"></div>
-
-                </div>
-
-            ` : `
-
-                <div class="card eda-explorer-card">
-
-                    <span class="tag">
-                        ИССЛЕДОВАТЕЛЬСКИЙ АНАЛИЗ ДАННЫХ
-                    </span>
-
-                    <h3>
-                        Нет исследуемых величин
-                    </h3>
-
-                    <p class="muted">
-                        Добавь переменные в data.js, чтобы начать исследование.
-                    </p>
-
-                </div>
-
-            `}
-
-        </section>
-
-    `;
-}
-
 
 // ==========================================
 // SAMPLING SIMULATOR

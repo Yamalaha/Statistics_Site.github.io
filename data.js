@@ -11,6 +11,7 @@ window.LABS = [
 
     {
         id: "lab-01",
+        palette: { accent: "#945165", accentLight: "#F1E5E8", series: ["#945165", "#B89A62", "#788C7D"] },
         number: "01",
         title: "Wine Quality",
         subtitle: "Wine Quality as a stochastic system",
@@ -66,7 +67,9 @@ window.LABS = [
                     { label: "Variance", value: "0.763" },
                     { label: "Std. dev.", value: "0.873" },
                     { label: "Mode", value: "6" },
-                    { label: "Range", value: "3–9" }
+                    { label: "Range", value: "3–9" },
+                    { label: "D’Agostino–Pearson K²", value: "50.3590" },
+                    { label: "p-value normality", value: "1.161 × 10⁻¹¹" }
                 ],
 
                 chart: {
@@ -78,7 +81,7 @@ window.LABS = [
                 },
 
                 conclusion:
-                    "Наиболее часто встречается оценка 6 — 43,65% наблюдений. Распределение статистически отличается от нормального."
+                    "Наиболее часто встречается оценка 6 — 43,65% наблюдений. Тест Д’Агостино–Пирсона отвергает нормальность (K² = 50.3590; p = 1.161 × 10⁻¹¹). Поскольку quality — дискретная порядковая переменная, результат следует трактовать как диагностическое сравнение, а не как требование нормальности для дальнейшего анализа."
             },
 
             {
@@ -114,7 +117,7 @@ window.LABS = [
                 },
 
                 conclusion:
-                    "Среднее содержание алкоголя немного выше в белом вине. Среди рассмотренных моделей логнормальная имеет наименьший AIC."
+                    "Среднее содержание алкоголя немного выше в белом вине. Для определения наилучшей модели распределения необходимо выполнить полноценную подгонку по исходным наблюдениям и сравнить модели по критериям качества."
             },
 
             {
@@ -139,8 +142,8 @@ window.LABS = [
                     { label: "Median", value: "0.2900" },
                     { label: "Variance", value: "0.0271" },
                     { label: "Std. dev.", value: "0.1646" },
-                    { label: "Skewness", value: "1.4948" },
-                    { label: "Kurtosis", value: "2.8223" }
+                    { label: "Skewness", value: "1.4951" },
+                    { label: "Kurtosis", value: "2.8254" }
                 ],
 
                 chart: {
@@ -214,34 +217,29 @@ window.LABS = [
                     "Корреляционный анализ Пирсона и Спирмена",
         
                 h0:
-                    "Коэффициент корреляции между содержанием алкоголя и качеством равен нулю.",
+                    "В каждой группе вина коэффициенты корреляции Пирсона и Спирмена между alcohol и quality равны нулю.",
         
                 h1:
-                    "Коэффициент корреляции между содержанием алкоголя и качеством отличается от нуля.",
+                    "Хотя бы в одной группе хотя бы один из коэффициентов корреляции отличается от нуля.",
         
                 pValue: null,
         
-                pValueUpperBound: 0.05,
-        
                 pValueText:
-                    "p < 0.05 (точное значение не сохранено)",
+                    "Рассчитывается по исходным CSV отдельно для каждой корреляции.",
         
                 metrics: [
-        
-                    {
-                        label: "Пирсон r — красное вино",
-                        value: "0.4762"
-                    },
-        
-                    {
-                        label: "Пирсон r — белое вино",
-                        value: "0.4356"
-                    }
-        
+                    { label: "Пирсон r — красное", value: "0.4762" },
+                    { label: "p-value Пирсона — красное", value: "2.831 × 10⁻⁹¹" },
+                    { label: "Пирсон r — белое", value: "0.4356" },
+                    { label: "p-value Пирсона — белое", value: "5.615 × 10⁻²²⁶" },
+                    { label: "Спирмен ρ — красное", value: "0.4785" },
+                    { label: "p-value Спирмена — красное", value: "2.727 × 10⁻⁹²" },
+                    { label: "Спирмен ρ — белое", value: "0.4404" },
+                    { label: "p-value Спирмена — белое", value: "1.659 × 10⁻²³¹" }
                 ],
         
                 conclusion:
-                    "В сохранённых результатах связь отмечена как статистически значимая. Точное p-value и отдельные результаты тестирования для каждой группы не сохранены."
+                    "В обеих группах положительная связь статистически значима по Пирсону и Спирмену. Проверки рассматриваются отдельно и имеют разведочный характер; поправка на множественные сравнения не применялась."
         
             },
         
@@ -264,13 +262,23 @@ window.LABS = [
                 pValue: null,
         
                 pValueText:
-                    "Численное значение не сохранено: численное переполнение.",
+                    "Рассчитывается по исходным CSV; для экстремально малого значения дополнительно выводится log₁₀(p).",
         
                 metrics: [
         
                     {
                         label: "Статистика U",
                         value: "7 059 623.5"
+                    },
+        
+                    {
+                        label: "Статистика z",
+                        value: "48.2901"
+                    },
+        
+                    {
+                        label: "log₁₀(p-value)",
+                        value: "−508.1541"
                     },
         
                     {
@@ -286,7 +294,7 @@ window.LABS = [
                 ],
         
                 conclusion:
-                    "Исходный расчёт не сохранил численное значение p-value. Для формального решения при выбранном уровне значимости необходимо повторить вычисление."
+                    "Распределения летучей кислотности красного и белого вина существенно различаются. Для экстремально малого p-value дополнительно приводится log₁₀(p)."
         
             }
         
@@ -302,15 +310,59 @@ window.LABS = [
 
             trueMean: "5.8184",
 
-            points: [
-                { n: 10, wr: 0.27235, wor: 0.28996, seWor: 0.27593 },
-                { n: 30, wr: 0.16180, wor: 0.15578, seWor: 0.15907 },
-                { n: 50, wr: 0.12424, wor: 0.12299, seWor: 0.12302 },
-                { n: 100, wr: 0.08866, wor: 0.08528, seWor: 0.08665 },
-                { n: 300, wr: 0.04953, wor: 0.05115, seWor: 0.04924 },
-                { n: 500, wr: 0.03823, wor: 0.03778, seWor: 0.03752 },
-                { n: 1000, wr: 0.02756, wor: 0.02553, seWor: 0.02540 }
-            ]
+            
+points: [
+    {
+        n: 10,
+        wr: 0.27235,
+        wor: 0.28996,
+        seWr: 0.27613,
+        seWor: 0.27593
+    },
+    {
+        n: 30,
+        wr: 0.16180,
+        wor: 0.15578,
+        seWr: 0.15942,
+        seWor: 0.15907
+    },
+    {
+        n: 50,
+        wr: 0.12424,
+        wor: 0.12299,
+        seWr: 0.12349,
+        seWor: 0.12302
+    },
+    {
+        n: 100,
+        wr: 0.08866,
+        wor: 0.08528,
+        seWr: 0.08732,
+        seWor: 0.08665
+    },
+    {
+        n: 300,
+        wr: 0.04953,
+        wor: 0.05115,
+        seWr: 0.05041,
+        seWor: 0.04924
+    },
+    {
+        n: 500,
+        wr: 0.03823,
+        wor: 0.03778,
+        seWr: 0.03905,
+        seWor: 0.03752
+    },
+    {
+        n: 1000,
+        wr: 0.02756,
+        wor: 0.02553,
+        seWr: 0.02761,
+        seWor: 0.02540
+    }
+]
+
         },
 
         methods: [
@@ -434,110 +486,118 @@ window.LABS = [
     },
 
     // ======================================
-    // LAB 02 — TEMPLATE
+    // LAB 02 — AqSolDB
     // ======================================
 
     {
         id: "lab-02",
+        palette: { accent: "#2A6F97", accentLight: "#E5F0F5", series: ["#2A6F97", "#E76F51", "#2A9D8F"] },
         number: "02",
-        title: "Laboratory 02",
-        subtitle: "Research title",
-
-        status: "Not started",
-
-        description:
-            "Краткое описание второго исследования.",
-
+        title: "AqSolDB",
+        subtitle: "Статистическое исследование свойств химических соединений и построение генераторов случайных величин.",
+        status: "Interactive",
+        description: "Исследование растворимости LogS, липофильности Mol LogP и молекулярной массы Mol Wt на данных AqSolDB.",
         dataset: {
-            name: "Dataset name",
-            source: "Data source",
-            url: "",
-            description: "Описание датасета.",
-            metrics: [],
-            groups: []
+            name: "AqSolDB",
+            source: "OpenML · dataset 43546",
+            url: "https://www.openml.org/d/43546",
+            description: "Объединённый набор данных экспериментальной растворимости и 2D-дескрипторов 9 982 химических соединений из девяти публичных источников.",
+            metrics: [
+                { label: "Observations", value: "9 982" },
+                { label: "Variables", value: "26" },
+                { label: "Missing values", value: "0" },
+                { label: "Source datasets", value: "9" }
+            ],
+            groups: [
+                { label: "G1", value: 7746 },
+                { label: "G2", value: 235 },
+                { label: "G3", value: 1182 },
+                { label: "G4", value: 183 },
+                { label: "G5", value: 636 }
+            ]
         },
-
-        variables: [],
-        hypotheses: [],
+        variables: [
+            { id: "logs", code: "RV 01", symbol: "LogS", name: "Растворимость в воде", type: "Continuous", unit: "log₁₀(моль/л)" },
+            { id: "logp", code: "RV 02", symbol: "Mol LogP", name: "Липофильность", type: "Continuous", unit: "безразмерная" },
+            { id: "molwt", code: "RV 03", symbol: "Mol Wt", name: "Молекулярная масса", type: "Continuous", unit: "г/моль" }
+        ],
+        hypotheses: [
+            { id: "aromatic-solubility", title: "Отличается ли растворимость соединений с ароматическими кольцами и без них?", method: "Критерий Манна — Уитни", pValue: 6.768e-186 },
+            { id: "reliability-mass", title: "Одинаково ли распределение молекулярной массы в группах надёжности G1–G5?", method: "Критерий Краскела — Уоллиса", pValue: 4.777e-62 },
+            { id: "solubility-logp", title: "Выше ли липофильность у практически нерастворимых соединений?", method: "Односторонний критерий Манна — Уитни", pValue: 0 }
+        ],
         sampling: null,
         methods: [],
         conclusions: [],
         references: [],
-
-        generator: {
-            status: "planned",
-            description: "Будущий модуль генератора."
-        }
+        generator: { status: "Interactive", description: "ЛКГ, MT19937 и генераторы распределений для LogS, Mol LogP и Mol Wt." }
     },
 
     // ======================================
-    // LAB 03 — TEMPLATE
+    // ======================================
+    // LAB 03 — ChEMBL / EGFR
     // ======================================
 
     {
         id: "lab-03",
+        palette: { accent: "#C44569", accentLight: "#F8E9EE", series: ["#C44569", "#168C86", "#7656A6"] },
         number: "03",
-        title: "Laboratory 03",
-        subtitle: "Research title",
-
-        status: "Not started",
-        description: "Краткое описание исследования.",
-
+        title: "ChEMBL · EGFR",
+        subtitle: "Статистическое исследование биологической активности и физико-химических свойств соединений, измеренных для человеческой мишени EGFR.",
+        status: "CSV required",
+        description: "Исследование активности pIC50, молекулярной массы и топологической полярной поверхности молекул, для которых в ChEMBL доступны измерения IC50 в отношении человеческого EGFR (CHEMBL203).",
         dataset: {
-            name: "Dataset name",
-            source: "Data source",
-            url: "",
-            description: "Описание датасета.",
-            metrics: [],
-            groups: []
+            name: "ChEMBL · EGFR (CHEMBL203)",
+            source: "ChEMBL database · EMBL-EBI REST API",
+            url: "https://www.ebi.ac.uk/chembl/",
+            description: "Итоговая таблица: одна строка на молекулу; pIC50 агрегирован медианой доступных измерений IC50. Отбор включает IC50 в nM, pChEMBL value, confidence score ≥ 8 и сопоставимые отношения измерения.",
+            metrics: [], groups: []
         },
-
-        variables: [],
-        hypotheses: [],
-        sampling: null,
-        methods: [],
-        conclusions: [],
-        references: [],
-
-        generator: {
-            status: "planned",
-            description: "Будущий модуль генератора."
-        }
+        variables: [
+            { id: "pic50", code: "RV 01", symbol: "pIC50", name: "Биологическая активность", type: "Continuous", unit: "log₁₀-шкала", description: "Стандартизованная мера активности ChEMBL (pChEMBL value). Для IC50 в nM проверяется пересчёт pIC50 = 9 − log₁₀(IC50 [nM]).", nature: "Случайный эксперимент — выбор соединения из зафиксированной совокупности записей ChEMBL. Опубликованные assay могут различаться условиями и протоколами.", formula: "pIC50 = −log₁₀(IC50 [M])", statistics: [], chart: null, conclusion: "Фактические статистики и распределение рассчитываются после подключения итогового CSV." },
+            { id: "molecular-weight", code: "RV 02", symbol: "MW", name: "Молекулярная масса", type: "Continuous", unit: "г/моль", description: "Молекулярная масса соединения, присоединённая из химических свойств ChEMBL.", nature: "Для выбранной молекулы значение фиксировано; случайность возникает из процедуры выбора соединения из исследуемой совокупности.", formula: "X₂ = Molecular Weight", statistics: [], chart: null, conclusion: "Фактические статистики и распределение рассчитываются после подключения итогового CSV." },
+            { id: "tpsa", code: "RV 03", symbol: "TPSA", name: "Топологическая полярная поверхность", type: "Continuous", unit: "Å²", description: "Топологическая полярная поверхность молекулы — вычисляемый дескриптор, характеризующий вклад полярных атомов.", nature: "Для выбранной молекулы значение фиксировано; случайность возникает из процедуры выбора соединения из исследуемой совокупности.", formula: "X₃ = TPSA", statistics: [], chart: null, conclusion: "Фактические статистики и распределение рассчитываются после подключения итогового CSV." }
+        ],
+        hypotheses: [], sampling: null, methods: [], conclusions: [], references: [
+            { title: "ChEMBL database", url: "https://www.ebi.ac.uk/chembl/" },
+            { title: "ChEMBL web services", url: "https://chembl.gitbook.io/chembl-interface-documentation/web-services/chembl-data-web-services" },
+            { title: "Target CHEMBL203 — EGFR", url: "https://www.ebi.ac.uk/chembl/api/data/target/CHEMBL203.json" },
+            { title: "Mersenne Twister (1998)", url: "https://doi.org/10.1145/272991.272995" }
+        ],
+        generator: { status: "MT19937 implemented", description: "Собственный MT19937 + обратное эмпирическое квантильное преобразование для pIC50; train/test 70/30." }
     },
 
     // ======================================
-    // LAB 04 — TEMPLATE
+    // LAB 04 — QM9
     // ======================================
 
     {
         id: "lab-04",
+        palette: { accent: "#356FE0", accentLight: "#EAF0FE", series: ["#356FE0", "#C04491", "#C47A2C"] },
         number: "04",
-        title: "Laboratory 04",
-        subtitle: "Research title",
-
-        status: "Not started",
-        description: "Краткое описание исследования.",
-
+        title: "QM9 · Molecular Properties",
+        subtitle: "Статистическое исследование квантово-химических характеристик малых органических молекул.",
+        status: "CSV required",
+        description: "Исследование HOMO–LUMO gap, дипольного момента и изотропной поляризуемости молекул из набора QM9. Значения получены квантово-химическим расчётом B3LYP/6-31G(2df,p).",
         dataset: {
-            name: "Dataset name",
-            source: "Data source",
-            url: "",
-            description: "Описание датасета.",
-            metrics: [],
-            groups: []
+            name: "QM9",
+            source: "QM9 · TensorFlow Datasets",
+            url: "https://doi.org/10.6084/m9.figshare.c.978904.v5",
+            description: "Набор квантово-химических характеристик малых органических молекул. Генеральная совокупность ограничена молекулами, представленными в используемой выгрузке QM9; свойства являются расчётными, а не экспериментальными.",
+            metrics: [], groups: []
         },
-
-        variables: [],
-        hypotheses: [],
-        sampling: null,
-        methods: [],
-        conclusions: [],
-        references: [],
-
-        generator: {
-            status: "planned",
-            description: "Будущий модуль генератора."
-        }
+        variables: [
+            { id: "gap", code: "RV 01", symbol: "gap", name: "HOMO–LUMO gap", type: "Continuous", unit: "эВ", description: "Энергетическая щель между HOMO и LUMO; используется поле gap из TensorFlow Datasets QM9.", nature: "Случайный эксперимент — выбор молекулы из совокупности QM9. Для каждой фиксированной молекулы результат квантово-химического расчёта задан.", formula: "Y₁ = gap", statistics: [], chart: null, conclusion: "Фактические статистики и распределение рассчитываются после подключения CSV QM9." },
+            { id: "mu", code: "RV 02", symbol: "μ", name: "Дипольный момент", type: "Continuous", unit: "Дебай", description: "Модуль дипольного момента молекулы, рассчитанный квантово-химическим методом.", nature: "Случайный эксперимент — выбор молекулы из совокупности QM9; значение свойства фиксировано для выбранной молекулы.", formula: "Y₂ = μ", statistics: [], chart: null, conclusion: "Фактические статистики и распределение рассчитываются после подключения CSV QM9." },
+            { id: "alpha", code: "RV 03", symbol: "α", name: "Изотропная поляризуемость", type: "Continuous", unit: "Bohr³", description: "Изотропная поляризуемость молекулы — характеристика отклика электронной системы на внешнее электрическое поле.", nature: "Случайный эксперимент — выбор молекулы из совокупности QM9; значение свойства фиксировано для выбранной молекулы.", formula: "Y₃ = α", statistics: [], chart: null, conclusion: "Фактические статистики и распределение рассчитываются после подключения CSV QM9." }
+        ],
+        hypotheses: [], sampling: null, methods: [], conclusions: [], references: [
+            { title: "QM9 original dataset", url: "https://doi.org/10.6084/m9.figshare.c.978904.v5" },
+            { title: "TensorFlow Datasets — QM9", url: "https://www.tensorflow.org/datasets/catalog/qm9" },
+            { title: "Ramakrishnan et al. (2014)", url: "https://doi.org/10.1038/sdata.2014.22" },
+            { title: "Mersenne Twister (1998)", url: "https://doi.org/10.1145/272991.272995" }
+        ],
+        generator: { status: "MT19937 implemented", description: "Собственный MT19937 + обратное эмпирическое квантильное преобразование для HOMO–LUMO gap; train/test 70/30." }
     }
 
 ];
